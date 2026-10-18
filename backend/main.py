@@ -1,0 +1,42 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from backend.routers import auth, curriculum, vector_rud
+
+app = FastAPI(
+    title="AI Tutor & Skill Tree API",
+    description="Backend API combining MySQL 8.0+ relational core with ChromaDB vector store.",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
+app.include_router(curriculum.router)
+app.include_router(vector_rud.router)
+
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "service": "AI Tutor & Skill Tree Backend",
+        "endpoints": {
+            "docs": "/docs",
+            "auth": "/api/auth",
+            "curriculum": "/api/curriculum",
+            "vector_rud": "/api/vector"
+        }
+    }
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
