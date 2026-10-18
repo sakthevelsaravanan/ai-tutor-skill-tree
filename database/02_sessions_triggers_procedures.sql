@@ -1,10 +1,4 @@
 
--- ============================================================
--- Project: AI Tutor & Skill Tree
--- Member 2: Adaptive Tutoring Engine & Mastery Tracking
--- File: 02_sessions_triggers_procedures.sql
--- Database: MySQL 8.0+
--- ============================================================
 
 -- IMPORTANT:
 -- Create/select the project database before running this file.
