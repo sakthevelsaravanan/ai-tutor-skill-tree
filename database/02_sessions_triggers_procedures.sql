@@ -316,6 +316,7 @@ BEGIN
     END IF;
 END//
 
+
 CREATE PROCEDURE sp_record_quiz_and_advance_stage(
     IN p_session_id CHAR(36),
     IN p_mcq_score TINYINT,
@@ -330,10 +331,12 @@ BEGIN
     DECLARE v_session_count INT DEFAULT 0;
 
     SELECT COUNT(*) INTO v_session_count
-    FROM LEARNING_SESSIONS WHERE session_id = p_session_id;
+    FROM LEARNING_SESSIONS
+    WHERE session_id = p_session_id;
 
     IF v_session_count = 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Session not found.';
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Session not found.';
     END IF;
 
     SELECT user_id, current_topic_id, quiz_difficulty
@@ -342,7 +345,24 @@ BEGIN
     WHERE session_id = p_session_id;
 
     IF v_topic_id IS NULL THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Session has no current topic.';
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Session has no current topic.';
+    END IF;
+
+    -- Validate quiz verdict
+    IF p_verdict IS NULL
+       OR p_verdict NOT IN ('UNDERSTOOD', 'PARTIAL', 'CONFUSED') THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid quiz verdict.';
+    END IF;
+
+    -- Validate quiz scores
+    IF (p_mcq_score IS NOT NULL
+        AND p_mcq_score NOT BETWEEN 0 AND 3)
+       OR (p_check_score IS NOT NULL
+        AND p_check_score NOT BETWEEN 1 AND 5) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid quiz score.';
     END IF;
 
     INSERT INTO QUIZ_ATTEMPTS (
@@ -356,21 +376,29 @@ BEGIN
 
     IF p_verdict = 'CONFUSED' THEN
         SET p_next_stage = 'clarify';
+
         UPDATE LEARNING_SESSIONS
-        SET current_stage = 'clarify', confused_count = confused_count + 1
+        SET current_stage = 'clarify',
+            confused_count = confused_count + 1
         WHERE session_id = p_session_id;
+
     ELSEIF p_verdict = 'UNDERSTOOD' THEN
         SET p_next_stage = 'explore';
+
         UPDATE LEARNING_SESSIONS
-        SET current_stage = 'explore', confused_count = 0
+        SET current_stage = 'explore',
+            confused_count = 0
         WHERE session_id = p_session_id;
+
     ELSE
         SET p_next_stage = 'check';
+
         UPDATE LEARNING_SESSIONS
         SET current_stage = 'check'
         WHERE session_id = p_session_id;
     END IF;
 END//
+
 
 DELIMITER ;
 
