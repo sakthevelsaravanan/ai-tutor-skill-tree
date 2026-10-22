@@ -1,0 +1,166 @@
+// ============================================================
+// AI Tutor & Skill Tree — DBML Schema (for dbdiagram.io)
+// Paste directly into: https://dbdiagram.io
+// Generates clean Crow's Foot ER Diagram with 1-click PNG/PDF export
+// ============================================================
+
+Table USERS as U {
+  user_id int [pk, increment]
+  full_name varchar(100) [not null]
+  email varchar(255) [unique, not null]
+  password_hash varchar(255) [not null]
+  role user_role [not null]
+  created_at timestamp [default: `now()`]
+
+  Note: "Platform credentials and roles for RBAC"
+}
+
+enum user_role {
+  student
+  instructor
+}
+
+Table SUBJECTS as S {
+  subject_id int [pk, increment]
+  subject_key varchar(50) [unique, not null, note: "e.g. dsa, dvlsi, cs, networks"]
+  subject_name varchar(100) [not null]
+  description text
+  is_indexed boolean [default: false]
+  created_by int [null]
+  created_at timestamp [default: `now()`]
+}
+
+Table TEXTBOOKS as TB {
+  textbook_id int [pk, increment]
+  subject_id int [not null]
+  uploaded_by int [null]
+  file_name varchar(255) [not null]
+  chroma_collection_name varchar(100) [not null]
+  chunk_count int [default: 0, note: "CHECK chunk_count >= 0"]
+  uploaded_at timestamp [default: `now()`]
+}
+
+Table TOPICS as T {
+  topic_id int [pk, increment]
+  subject_id int [not null]
+  topic_name varchar(100) [not null]
+  difficulty_level tinyint [not null, note: "CHECK 1 to 3"]
+  visual_type visual_type_enum [not null]
+  embed_url text
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    (subject_id, topic_name) [unique]
+  }
+}
+
+enum visual_type_enum {
+  iframe
+  p5js
+}
+
+Table TOPIC_PREREQUISITES as TP {
+  topic_id int [pk]
+  prereq_topic_id int [pk]
+  importance_weight tinyint [default: 3, note: "CHECK 1 to 5; CHECK topic_id <> prereq_topic_id"]
+
+  Note: "Recursive M:N adjacency matrix modeling the Skill Tree DAG"
+}
+
+Table LEARNING_SESSIONS as LS {
+  session_id char(36) [pk, note: "UUIDv4"]
+  user_id int [not null]
+  subject_id int [not null]
+  current_topic_id int [null]
+  current_stage stage_enum [default: 'topic']
+  quiz_difficulty tinyint [default: 1, note: "CHECK 1 to 3"]
+  confused_count int [default: 0, note: "CHECK >= 0"]
+  started_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+enum stage_enum {
+  topic
+  explore
+  quiz
+  check
+  clarify
+}
+
+Table CONVERSATION_LOGS as CL {
+  log_id int [pk, increment]
+  session_id char(36) [not null]
+  topic_id int [null]
+  role chat_role [not null]
+  stage stage_enum [not null]
+  content text [not null]
+  created_at timestamp [default: `now()`]
+}
+
+enum chat_role {
+  user
+  assistant
+  system
+}
+
+Table QUIZ_ATTEMPTS as QA {
+  attempt_id int [pk, increment]
+  session_id char(36) [not null]
+  user_id int [not null]
+  topic_id int [not null]
+  difficulty_level tinyint [not null, note: "CHECK 1 to 3"]
+  mcq_score tinyint [null, note: "CHECK 0 to 3"]
+  check_score tinyint [null, note: "CHECK 1 to 5"]
+  verdict verdict_enum [null]
+  attempted_at timestamp [default: `now()`]
+}
+
+enum verdict_enum {
+  UNDERSTOOD
+  PARTIAL
+  CONFUSED
+}
+
+Table STUDENT_TOPIC_MASTERY as STM {
+  user_id int [pk]
+  topic_id int [pk]
+  mastery_status mastery_enum [default: 'UNTOUCHED']
+  best_mcq_score tinyint [null, note: "CHECK 0 to 3"]
+  latest_check_score tinyint [null, note: "CHECK 1 to 5"]
+  total_attempts int [default: 0, note: "CHECK >= 0"]
+  last_updated timestamp [default: `now()`]
+}
+
+enum mastery_enum {
+  UNTOUCHED
+  IN_PROGRESS
+  NEEDS_PREREQ_REVIEW
+  MASTERED
+}
+
+// ------------------------------------------------------------
+// Relationships & Foreign Key Cardinalities (Crow's Foot)
+// ------------------------------------------------------------
+
+Ref: S.created_by > U.user_id [delete: set null]
+Ref: TB.subject_id > S.subject_id [delete: cascade]
+Ref: TB.uploaded_by > U.user_id [delete: set null]
+Ref: T.subject_id > S.subject_id [delete: cascade]
+
+// Recursive Prerequisite Skill Tree DAG
+Ref: TP.topic_id > T.topic_id [delete: cascade]
+Ref: TP.prereq_topic_id > T.topic_id [delete: cascade]
+
+// Tutoring Sessions & Turn-by-Turn Dialogue
+Ref: LS.user_id > U.user_id [delete: cascade]
+Ref: LS.subject_id > S.subject_id [delete: cascade]
+Ref: LS.current_topic_id > T.topic_id [delete: set null]
+Ref: CL.session_id > LS.session_id [delete: cascade]
+Ref: CL.topic_id > T.topic_id [delete: set null]
+
+// Quiz Assessments & Persistent Mastery
+Ref: QA.session_id > LS.session_id [delete: cascade]
+Ref: QA.user_id > U.user_id [delete: cascade]
+Ref: QA.topic_id > T.topic_id [delete: cascade]
+Ref: STM.user_id > U.user_id [delete: cascade]
+Ref: STM.topic_id > T.topic_id [delete: cascade]
