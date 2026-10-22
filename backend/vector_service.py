@@ -17,7 +17,7 @@ class VectorStoreService:
             metadata={"hnsw:space": "cosine", "subject": subject_key}
         )
 
-    # 1. Create (Add Chunks)
+    # 1. Create (Add / Upsert Chunks)
     def add_chunks(
         self,
         subject_key: str,
@@ -26,8 +26,17 @@ class VectorStoreService:
         ids: List[str]
     ) -> int:
         col = self.get_or_create_collection(subject_key)
-        col.add(documents=documents, metadatas=metadatas, ids=ids)
+        col.upsert(documents=documents, metadatas=metadatas, ids=ids)
         return len(ids)
+
+    def upsert_chunks(
+        self,
+        subject_key: str,
+        documents: List[str],
+        metadatas: List[Dict],
+        ids: List[str]
+    ) -> int:
+        return self.add_chunks(subject_key, documents, metadatas, ids)
 
     # 2. Read (Semantic Top-K Search)
     def search(
@@ -38,9 +47,13 @@ class VectorStoreService:
         where_filter: Optional[Dict] = None
     ) -> List[Dict]:
         col = self.get_or_create_collection(subject_key)
+        total_count = col.count()
+        if total_count == 0:
+            return []
+
         kwargs = {
             "query_texts": [query_text],
-            "n_results": min(n_results, max(1, col.count()))
+            "n_results": min(n_results, total_count)
         }
         if where_filter:
             kwargs["where"] = where_filter

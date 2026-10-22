@@ -1,4 +1,5 @@
 import io
+import hashlib
 from typing import List, Tuple
 from pypdf import PdfReader
 from backend.vector_service import vector_service
@@ -43,9 +44,10 @@ class PDFIndexer:
             if not page_text.strip():
                 continue
 
+            file_hash = hashlib.md5(file_name.encode("utf-8")).hexdigest()[:8]
             page_chunks = self._split_text(page_text)
             for idx, chunk in enumerate(page_chunks):
-                chunk_id = f"{subject_key}_tb_{file_name[:8]}_p{page_idx + 1}_c{idx}"
+                chunk_id = f"{subject_key}_tb_{file_hash}_p{page_idx + 1}_c{idx}"
                 all_docs.append(chunk)
                 all_ids.append(chunk_id)
                 all_metas.append({
@@ -57,7 +59,12 @@ class PDFIndexer:
                 })
 
         if all_docs:
-            vector_service.add_chunks(
+            try:
+                # Remove stale chunks for this file if re-indexing
+                vector_service.delete_chunks(subject_key=subject_key, where_filter={"file_name": file_name})
+            except Exception:
+                pass
+            vector_service.upsert_chunks(
                 subject_key=subject_key,
                 documents=all_docs,
                 metadatas=all_metas,
