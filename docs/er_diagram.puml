@@ -1,0 +1,133 @@
+@startuml er_diagram
+!theme plain
+skinparam linetype ortho
+skinparam roundcorner 5
+skinparam shadowing false
+skinparam class {
+    BackgroundColor #F8FAFC
+    ArrowColor #475569
+    BorderColor #334155
+}
+
+entity "USERS" as users {
+    * user_id : INT <<PK, AUTO_INCREMENT>>
+    --
+    * full_name : VARCHAR(100)
+    * email : VARCHAR(255) <<UNIQUE>>
+    * password_hash : VARCHAR(255)
+    * role : ENUM('student', 'instructor')
+    * created_at : TIMESTAMP
+}
+
+entity "SUBJECTS" as subjects {
+    * subject_id : INT <<PK, AUTO_INCREMENT>>
+    --
+    * subject_key : VARCHAR(50) <<UNIQUE>>
+    * subject_name : VARCHAR(100)
+    description : TEXT
+    * is_indexed : BOOLEAN
+    created_by : INT <<FK>>
+    * created_at : TIMESTAMP
+}
+
+entity "TEXTBOOKS" as textbooks {
+    * textbook_id : INT <<PK, AUTO_INCREMENT>>
+    --
+    * subject_id : INT <<FK>>
+    uploaded_by : INT <<FK>>
+    * file_name : VARCHAR(255)
+    * chroma_collection_name : VARCHAR(100)
+    * chunk_count : INT [CHECK >= 0]
+    * uploaded_at : TIMESTAMP
+}
+
+entity "TOPICS" as topics {
+    * topic_id : INT <<PK, AUTO_INCREMENT>>
+    --
+    * subject_id : INT <<FK>>
+    * topic_name : VARCHAR(100) <<UNIQUE with subject_id>>
+    * difficulty_level : TINYINT [CHECK 1..3]
+    * visual_type : ENUM('iframe', 'p5js')
+    embed_url : TEXT
+    * created_at : TIMESTAMP
+}
+
+entity "TOPIC_PREREQUISITES" as prereqs {
+    * topic_id : INT <<PK, FK>>
+    * prereq_topic_id : INT <<PK, FK>>
+    --
+    * importance_weight : TINYINT [CHECK 1..5]
+}
+
+entity "LEARNING_SESSIONS" as sessions {
+    * session_id : CHAR(36) <<PK, UUID>>
+    --
+    * user_id : INT <<FK>>
+    * subject_id : INT <<FK>>
+    current_topic_id : INT <<FK>>
+    * current_stage : ENUM('topic', 'explore', 'quiz', 'check', 'clarify')
+    * quiz_difficulty : TINYINT [CHECK 1..3]
+    * confused_count : INT [CHECK >= 0]
+    * started_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "CONVERSATION_LOGS" as logs {
+    * log_id : INT <<PK, AUTO_INCREMENT>>
+    --
+    * session_id : CHAR(36) <<FK>>
+    topic_id : INT <<FK>>
+    * role : ENUM('user', 'assistant', 'system')
+    * stage : ENUM('topic', 'explore', 'quiz', 'check', 'clarify')
+    * content : TEXT
+    * created_at : TIMESTAMP
+}
+
+entity "QUIZ_ATTEMPTS" as quizzes {
+    * attempt_id : INT <<PK, AUTO_INCREMENT>>
+    --
+    * session_id : CHAR(36) <<FK>>
+    * user_id : INT <<FK>>
+    * topic_id : INT <<FK>>
+    * difficulty_level : TINYINT [CHECK 1..3]
+    mcq_score : TINYINT [CHECK 0..3]
+    check_score : TINYINT [CHECK 1..5]
+    verdict : ENUM('UNDERSTOOD', 'PARTIAL', 'CONFUSED')
+    * attempted_at : TIMESTAMP
+}
+
+entity "STUDENT_TOPIC_MASTERY" as mastery {
+    * user_id : INT <<PK, FK>>
+    * topic_id : INT <<PK, FK>>
+    --
+    * mastery_status : ENUM('UNTOUCHED', 'IN_PROGRESS', 'NEEDS_PREREQ_REVIEW', 'MASTERED')
+    best_mcq_score : TINYINT [CHECK 0..3]
+    latest_check_score : TINYINT [CHECK 1..5]
+    * total_attempts : INT [CHECK >= 0]
+    * last_updated : TIMESTAMP
+}
+
+' Relationships
+users ||--o{ subjects : "creates (1:N)"
+subjects ||--|{ textbooks : "contains (1:N)"
+users ||--o{ textbooks : "uploads (1:N)"
+subjects ||--|{ topics : "contains (1:N)"
+
+topics ||--o{ prereqs : "requires (target)"
+topics ||--o{ prereqs : "is_prereq_for (source)"
+
+users ||--o{ sessions : "initiates (1:N)"
+subjects ||--o{ sessions : "studied_in (1:N)"
+topics ||--o{ sessions : "current_topic (0..1)"
+
+sessions ||--|{ logs : "generates (1:N)"
+topics ||--o{ logs : "references (0..1)"
+
+sessions ||--|{ quizzes : "records (1:N)"
+users ||--o{ quizzes : "submits (1:N)"
+topics ||--|{ quizzes : "assesses (1:N)"
+
+users ||--o{ mastery : "achieves (M:N)"
+topics ||--o{ mastery : "tracked_in (M:N)"
+
+@enduml
