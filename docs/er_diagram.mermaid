@@ -1,0 +1,109 @@
+erDiagram
+    USERS ||--o{ SUBJECTS : "creates (1:N)"
+    USERS ||--o{ TEXTBOOKS : "uploads (1:N)"
+    USERS ||--o{ LEARNING_SESSIONS : "initiates (1:N)"
+    USERS ||--o{ QUIZ_ATTEMPTS : "submits (1:N)"
+    USERS ||--o{ STUDENT_TOPIC_MASTERY : "achieves (1:N)"
+
+    SUBJECTS ||--|{ TEXTBOOKS : "contains (1:N)"
+    SUBJECTS ||--|{ TOPICS : "contains (1:N)"
+    SUBJECTS ||--o{ LEARNING_SESSIONS : "studied_in (1:N)"
+
+    TOPICS ||--o{ TOPIC_PREREQUISITES : "requires"
+    TOPICS ||--o{ TOPIC_PREREQUISITES : "is_prereq_for"
+    TOPICS ||--o{ LEARNING_SESSIONS : "current_topic (0..1)"
+    TOPICS ||--o{ CONVERSATION_LOGS : "references (0..1)"
+    TOPICS ||--|{ QUIZ_ATTEMPTS : "assesses (1:N)"
+    TOPICS ||--o{ STUDENT_TOPIC_MASTERY : "tracked_in (1:N)"
+
+    LEARNING_SESSIONS ||--|{ CONVERSATION_LOGS : "generates (1:N)"
+    LEARNING_SESSIONS ||--|{ QUIZ_ATTEMPTS : "records (1:N)"
+
+    USERS {
+        int user_id PK
+        string full_name
+        string email UK
+        string password_hash
+        string role
+        timestamp created_at
+    }
+
+    SUBJECTS {
+        int subject_id PK
+        string subject_key UK
+        string subject_name
+        string description
+        boolean is_indexed
+        int created_by FK
+        timestamp created_at
+    }
+
+    TEXTBOOKS {
+        int textbook_id PK
+        int subject_id FK
+        int uploaded_by FK
+        string file_name
+        string chroma_collection_name
+        int chunk_count
+        timestamp uploaded_at
+    }
+
+    TOPICS {
+        int topic_id PK
+        int subject_id FK
+        string topic_name
+        int difficulty_level
+        string visual_type
+        string embed_url
+        timestamp created_at
+    }
+
+    TOPIC_PREREQUISITES {
+        int topic_id PK,FK
+        int prereq_topic_id PK,FK
+        int importance_weight
+    }
+
+    LEARNING_SESSIONS {
+        string session_id PK
+        int user_id FK
+        int subject_id FK
+        int current_topic_id FK
+        string current_stage
+        int quiz_difficulty
+        int confused_count
+        timestamp started_at
+        timestamp updated_at
+    }
+
+    CONVERSATION_LOGS {
+        int log_id PK
+        string session_id FK
+        int topic_id FK
+        string role
+        string stage
+        string content
+        timestamp created_at
+    }
+
+    QUIZ_ATTEMPTS {
+        int attempt_id PK
+        string session_id FK
+        int user_id FK
+        int topic_id FK
+        int difficulty_level
+        int mcq_score
+        int check_score
+        string verdict
+        timestamp attempted_at
+    }
+
+    STUDENT_TOPIC_MASTERY {
+        int user_id PK,FK
+        int topic_id PK,FK
+        string mastery_status
+        int best_mcq_score
+        int latest_check_score
+        int total_attempts
+        timestamp last_updated
+    }

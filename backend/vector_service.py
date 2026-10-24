@@ -1,5 +1,5 @@
 import chromadb
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from backend.config import settings
 
 class VectorStoreService:
@@ -17,26 +17,25 @@ class VectorStoreService:
             metadata={"hnsw:space": "cosine", "subject": subject_key}
         )
 
-    # 1. Create (Add / Upsert Chunks)
+    # 1. Create (Add Chunks)
     def add_chunks(
         self,
         subject_key: str,
         documents: List[str],
         metadatas: List[Dict],
-        ids: List[str]
+        ids: List[str],
+        batch_size: int = 100
     ) -> int:
         col = self.get_or_create_collection(subject_key)
-        col.upsert(documents=documents, metadatas=metadatas, ids=ids)
-        return len(ids)
-
-    def upsert_chunks(
-        self,
-        subject_key: str,
-        documents: List[str],
-        metadatas: List[Dict],
-        ids: List[str]
-    ) -> int:
-        return self.add_chunks(subject_key, documents, metadatas, ids)
+        total = len(ids)
+        for i in range(0, total, batch_size):
+            end = min(i + batch_size, total)
+            col.upsert(
+                documents=documents[i:end],
+                metadatas=metadatas[i:end],
+                ids=ids[i:end]
+            )
+        return total
 
     # 2. Read (Semantic Top-K Search)
     def search(
@@ -46,14 +45,18 @@ class VectorStoreService:
         n_results: int = 4,
         where_filter: Optional[Dict] = None
     ) -> List[Dict]:
-        col = self.get_or_create_collection(subject_key)
-        total_count = col.count()
-        if total_count == 0:
+        col_name = self._get_collection_name(subject_key)
+        try:
+            col = self.client.get_collection(col_name)
+        except Exception:
+            return []
+
+        if col.count() == 0:
             return []
 
         kwargs = {
             "query_texts": [query_text],
-            "n_results": min(n_results, total_count)
+            "n_results": min(n_results, max(1, col.count()))
         }
         if where_filter:
             kwargs["where"] = where_filter
@@ -122,16 +125,77 @@ class VectorStoreService:
         except Exception:
             return False
 
-    def get_stats(self, subject_key: str) -> Dict:
-        col = self.get_or_create_collection(subject_key)
+    def clear_collection(self, subject_key: str) -> int:
+        col_name = self._get_collection_name(subject_key)
+        try:
+            col = self.client.get_collection(col_name)
+            count = col.count()
+            self.client.delete_collection(col_name)
+            # Recreate clean empty collection with same metadata
+            self.client.get_or_create_collection(
+                name=col_name,
+                metadata={"hnsw:space": "cosine", "subject": subject_key}
+            )
+            return count
+        except Exception:
+            return 0
+
+    def clear_all_vectors(self) -> Dict[str, Any]:
+        cols = self.client.list_collections()
+        total_chunks = 0
+        cleared_names = []
+        for col in cols:
+            try:
+                count = col.count()
+                total_chunks += count
+                cleared_names.append(col.name)
+                self.client.delete_collection(col.name)
+            except Exception:
+                pass
         return {
-            "collection_name": col.name,
-            "total_chunks": col.count(),
-            "metadata": col.metadata
+            "total_chunks_deleted": total_chunks,
+            "collections_cleared": cleared_names,
+            "total_collections": len(cleared_names)
         }
+
+    def get_stats(self, subject_key: str) -> Dict:
+        col_name = self._get_collection_name(subject_key)
+        try:
+            col = self.client.get_collection(col_name)
+            return {
+                "collection_name": col.name,
+                "total_chunks": col.count(),
+                "metadata": col.metadata
+            }
+        except Exception:
+            return {
+                "collection_name": col_name,
+                "total_chunks": 0,
+                "metadata": {}
+            }
 
     def list_collections(self) -> List[Dict]:
         cols = self.client.list_collections()
         return [{"name": c.name, "count": c.count()} for c in cols]
+
+    def get_chunks(self, subject_key: str, limit: int = 50) -> List[Dict]:
+        col_name = self._get_collection_name(subject_key)
+        try:
+            col = self.client.get_collection(col_name)
+        except Exception:
+            return []
+        res = col.get(limit=limit)
+        items = []
+        if res and res.get("documents"):
+            docs = res["documents"]
+            metas = res.get("metadatas") or [{}] * len(docs)
+            ids = res.get("ids") or [""] * len(docs)
+            for i in range(len(docs)):
+                items.append({
+                    "id": ids[i],
+                    "document": docs[i],
+                    "metadata": metas[i] if i < len(metas) and metas[i] else {}
+                })
+        return items
 
 vector_service = VectorStoreService()

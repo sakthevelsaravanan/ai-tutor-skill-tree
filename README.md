@@ -10,6 +10,7 @@ Map STEM prerequisites and provide interactive, LLM-driven tutoring customized t
   - MySQL Relational Core: `USERS`, `SUBJECTS`, `TEXTBOOKS`, `TOPICS`, `TOPIC_PREREQUISITES`
   - Recursive CTEs for DAG prerequisite path traversal and ancestor/descendant exploration
   - ChromaDB Vector Store: Semantic PDF chunking and Vector RUD operations (`/api/vector`)
+  - Socratic RAG Tutoring Pipeline (`/api/tutor`): Prerequisite-guided context retrieval and reasoning
 - **Member 2 (Session Management, Quizzes & Adaptive Mastery)**:
   - Session & Mastery Schema: `LEARNING_SESSIONS`, `CONVERSATION_LOGS`, `QUIZ_ATTEMPTS`, `STUDENT_TOPIC_MASTERY`
   - MySQL Triggers: `trg_after_quiz_attempt_mastery` and `trg_after_session_confused_threshold`
@@ -55,6 +56,17 @@ python -m pytest backend/test_sessions.py -v
 # Run Member 1 vector RUD tests
 python backend/test_vector_rud.py
 
+# Run comprehensive 39-endpoint API test suite
+python -m backend.verify_all_apis
+
 # Optional: Run live database integration test
 python backend/test_sessions_live.py
+```
+
+### 4. Frontend Client (Next.js, TypeScript & Tailwind CSS)
+```powershell
+cd frontend
+npm install
+npm run dev
+# Open http://localhost:3000 in your browser
 ```
