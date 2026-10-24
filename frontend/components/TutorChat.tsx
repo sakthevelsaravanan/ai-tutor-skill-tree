@@ -257,8 +257,8 @@ export function TutorChat({
                 className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
               >
                 {!isUser && (
-                  <div className="h-7 w-7 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-300 shrink-0 text-xs mt-0.5">
-                    ✦
+                  <div className="h-7 w-7 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-300 shrink-0 text-[10px] font-bold mt-0.5">
+                    AI
                   </div>
                 )}
 
@@ -352,7 +352,7 @@ export function TutorChat({
                                 onClick={() => setQuery(`In response to the reflection challenge: ${msg.reflectionQuestion}`)}
                                 className="text-[10px] font-mono text-orange-400 hover:text-orange-300 underline pt-1 block"
                               >
-                                → Click to answer this reflection question
+                                Click to answer this reflection question
                               </button>
                             </div>
                           )}
@@ -418,8 +418,8 @@ export function TutorChat({
 
         {loading && (
           <div className="flex gap-3 justify-start">
-            <div className="h-7 w-7 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-orange-400 shrink-0 text-xs">
-              ✦
+            <div className="h-7 w-7 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-orange-400 shrink-0 text-[10px] font-bold">
+              AI
             </div>
             <div className="rounded-xl px-4 py-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-center gap-2">
               <RefreshCw className="h-3.5 w-3.5 animate-spin text-orange-400" />

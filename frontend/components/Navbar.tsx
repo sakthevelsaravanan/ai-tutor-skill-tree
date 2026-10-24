@@ -42,7 +42,7 @@ export function Navbar({
             className="flex items-center gap-2 text-left focus:outline-none group"
           >
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500 text-white font-bold text-xs shadow-sm shadow-orange-500/30 transition-transform group-hover:scale-105">
-              ✦
+              AI
             </div>
             <span className="text-sm font-semibold tracking-tight text-zinc-100">AI Tutor</span>
           </button>

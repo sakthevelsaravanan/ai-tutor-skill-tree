@@ -76,7 +76,7 @@ def _clean_slide_text(raw_text: str) -> str:
         upper = line.upper()
         if "THANK YOU" in upper or "ANY QUESTIONS" in upper or "@" in line or upper.startswith("PAGE "):
             continue
-        clean = line.lstrip("-*•● \t")
+        clean = line.lstrip("-* \t")
         if clean:
             cleaned_lines.append(clean)
     return " ".join(cleaned_lines)
@@ -317,7 +317,7 @@ Keep tone encouraging, rigorous, and concise."""
                 up = l.upper()
                 if any(k in up for k in ["DEPARTMENT OF", "THANK YOU", "ANY QUESTIONS", "@", "PES.EDU", "CHANDRA", "SLIDES"]):
                     continue
-                cleaned_l = l.lstrip("-*•● \t").strip()
+                cleaned_l = l.lstrip("-* \t").strip()
                 if cleaned_l and cleaned_l not in facts:
                     facts.append(cleaned_l)
 
