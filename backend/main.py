@@ -8,7 +8,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import auth, curriculum, vector_rud
+from backend.routers import auth, curriculum, vector_rud, sessions
 
 app = FastAPI(
     title="AI Tutor & Skill Tree API",
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(curriculum.router)
 app.include_router(vector_rud.router)
+app.include_router(sessions.router)
 
 @app.get("/")
 def root():
@@ -37,7 +38,8 @@ def root():
             "docs": "/docs",
             "auth": "/api/auth",
             "curriculum": "/api/curriculum",
-            "vector_rud": "/api/vector"
+            "vector_rud": "/api/vector",
+            "sessions": "/api/sessions"
         }
     }
 
