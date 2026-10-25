@@ -72,11 +72,12 @@ def get_topic_prerequisite_tree(topic_id: int):
             prereq_topic_id,
             prereq_topic_name,
             prereq_difficulty,
-            importance_weight,
-            traversal_depth,
-            learning_order_path
+            MAX(importance_weight) AS importance_weight,
+            MIN(traversal_depth) AS traversal_depth,
+            MIN(learning_order_path) AS learning_order_path
         FROM PrerequisiteChain
-        ORDER BY traversal_depth DESC, importance_weight DESC;
+        GROUP BY target_topic_id, prereq_topic_id, prereq_topic_name, prereq_difficulty
+        ORDER BY traversal_depth ASC, importance_weight DESC;
     """
     return execute_query(cte_query, (topic_id,))
 
@@ -107,12 +108,13 @@ def get_unlocked_topics(topic_id: int):
             INNER JOIN TOPIC_PREREQUISITES tp_child ON utc.unlocked_topic_id = tp_child.prereq_topic_id
             INNER JOIN TOPICS t_child ON tp_child.topic_id = t_child.topic_id
         )
-        SELECT DISTINCT
+        SELECT 
             unlocked_topic_id,
             unlocked_topic_name,
             difficulty_level,
-            unlock_tier
+            MIN(unlock_tier) AS unlock_tier
         FROM UnlockedTopicsChain
+        GROUP BY unlocked_topic_id, unlocked_topic_name, difficulty_level
         ORDER BY unlock_tier ASC, difficulty_level ASC;
     """
     return execute_query(cte_query, (topic_id,))

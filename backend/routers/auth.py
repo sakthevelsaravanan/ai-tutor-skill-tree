@@ -25,8 +25,9 @@ def verify_password(plain_password: str, stored_hash: str) -> bool:
         import bcrypt
         if stored_hash.startswith(("$2a$", "$2b$", "$2y$")):
             try:
-                return bcrypt.checkpw(plain_password.encode("utf-8"), stored_hash.encode("utf-8"))
-            except ValueError:
+                if bcrypt.checkpw(plain_password.encode("utf-8"), stored_hash.encode("utf-8")):
+                    return True
+            except Exception:
                 # Mock / placeholder bcrypt strings in seed data
                 pass
     except ImportError:
@@ -69,9 +70,10 @@ def get_all_users():
 @router.get("/roles")
 def get_roles():
     return {
-        "roles": ["student", "instructor"],
+        "roles": ["student", "instructor", "admin"],
         "permissions": {
-            "student": ["read_curriculum", "view_prerequisites", "run_quizzes", "view_mastery"],
-            "instructor": ["read_curriculum", "create_subject", "upload_textbook", "vector_rud", "edit_topics"]
+            "student": ["read_curriculum", "view_prerequisites", "run_quizzes", "view_mastery", "socratic_chat"],
+            "instructor": ["read_curriculum", "create_subject", "upload_textbook", "edit_topics", "view_analytics"],
+            "admin": ["read_curriculum", "create_subject", "upload_textbook", "edit_topics", "vector_rud", "manage_chromadb", "manage_users", "manage_rbac"]
         }
     }

@@ -1,18 +1,10 @@
-import sys
-from pathlib import Path
-
-# Ensure project root is in sys.path
-ROOT_DIR = Path(__file__).resolve().parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import auth, curriculum, vector_rud, sessions
+from backend.routers import auth, curriculum, vector_rud, tutor, sessions
 
 app = FastAPI(
     title="AI Tutor & Skill Tree API",
-    description="Backend API combining MySQL 8.0+ relational core with ChromaDB vector store.",
+    description="Backend API combining MySQL 8.0+ relational core with ChromaDB vector store and adaptive learning sessions.",
     version="1.0.0"
 )
 
@@ -27,6 +19,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(curriculum.router)
 app.include_router(vector_rud.router)
+app.include_router(tutor.router)
 app.include_router(sessions.router)
 
 @app.get("/")
@@ -39,6 +32,7 @@ def root():
             "auth": "/api/auth",
             "curriculum": "/api/curriculum",
             "vector_rud": "/api/vector",
+            "tutor": "/api/tutor",
             "sessions": "/api/sessions"
         }
     }
