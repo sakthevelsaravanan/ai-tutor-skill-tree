@@ -58,7 +58,7 @@ def verify_auth_rbac():
     print("\n=== 2. AUTHENTICATION & RBAC ENDPOINTS ===")
 
     def test_student_login():
-        res = http.post("/api/auth/login", json={"email": "roshan@student.edu", "password": "any"})
+        res = http.post("/api/auth/login", json={"email": "roshan@student.edu", "password": "password123"})
         assert res.status_code == 200
         data = res.json()
         assert data["role"] == "student"
@@ -66,7 +66,7 @@ def verify_auth_rbac():
     run_test("Auth", "POST /api/auth/login (Student role)", test_student_login)
 
     def test_instructor_login():
-        res = http.post("/api/auth/login", json={"email": "turing@aitutor.edu", "password": "any"})
+        res = http.post("/api/auth/login", json={"email": "turing@aitutor.edu", "password": "password123"})
         assert res.status_code == 200
         data = res.json()
         assert data["role"] == "instructor"
@@ -74,7 +74,7 @@ def verify_auth_rbac():
     run_test("Auth", "POST /api/auth/login (Instructor role)", test_instructor_login)
 
     def test_admin_login():
-        res = http.post("/api/auth/login", json={"email": "admin@aitutor.edu", "password": "any"})
+        res = http.post("/api/auth/login", json={"email": "admin@aitutor.edu", "password": "admin123"})
         assert res.status_code == 200
         data = res.json()
         assert data["role"] == "admin"
@@ -85,6 +85,11 @@ def verify_auth_rbac():
         res = http.post("/api/auth/login", json={"email": "nonexistent@user.edu", "password": "wrong"})
         assert res.status_code == 401
     run_test("Auth", "POST /api/auth/login (Invalid credentials -> 401)", test_invalid_login)
+
+    def test_wrong_password():
+        res = http.post("/api/auth/login", json={"email": "roshan@student.edu", "password": "wrong_password"})
+        assert res.status_code == 401
+    run_test("Auth", "POST /api/auth/login (Wrong password for existing user -> 401)", test_wrong_password)
 
     def test_get_users():
         res = http.get("/api/auth/users")
@@ -114,7 +119,7 @@ def get_active_test_subject():
             return res[0]
     except Exception:
         pass
-    return {"subject_id": 6, "subject_key": "big_data", "subject_name": "Big data"}
+    return {"subject_id": 1, "subject_key": "dsa", "subject_name": "Data Structures & Algorithms"}
 
 def verify_curriculum():
     print("\n=== 3. CURRICULUM & SKILL TREE ENDPOINTS ===")
@@ -209,7 +214,7 @@ def verify_chromadb_vector_rud():
     def test_semantic_search():
         res = http.post("/api/vector/search", json={
             "subject_key": sub_key,
-            "query": "distributed storage processing and datasets",
+            "query": f"principles and data structures in {sub['subject_name']}",
             "top_k": 2
         })
         assert res.status_code == 200
@@ -323,8 +328,9 @@ def verify_tutor_rag_pipeline():
     first_topic = topics[0] if topics else {"topic_id": 412, "topic_name": "Distributed Storage"}
 
     def test_tutor_query_with_prereqs():
+        topic_title = first_topic.get("topic_name", "algorithms")
         res = http.post("/api/tutor/query", json={
-            "query": "How does distributed storage and processing work?",
+            "query": f"Explain the core mechanisms, structure, and operations of {topic_title}",
             "subject_id": sub_id,
             "topic_id": first_topic["topic_id"],
             "include_prereqs": True
@@ -337,7 +343,7 @@ def verify_tutor_rag_pipeline():
 
     def test_tutor_query_general():
         res = http.post("/api/tutor/query", json={
-            "query": "Explain parallel data processing architectures",
+            "query": f"Explain fundamental principles and core structures in {sub['subject_name']}",
             "subject_id": sub_id
         })
         assert res.status_code == 200, f"Expected 200 got {res.status_code}: {res.text}"
