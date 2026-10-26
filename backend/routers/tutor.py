@@ -110,6 +110,289 @@ def _is_substantive_chunk(raw_text: str) -> bool:
     cleaned = _clean_chunk_text(raw_text)
     return len(cleaned) >= 35 and len(cleaned.split()) >= 6
 
+# ==============================================================================
+# Numerical Solver for Hill Cipher
+# ==============================================================================
+
+def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
+    q_lower = query.lower()
+    
+    # Must involve hill cipher or encryption/matrix calculation
+    is_calc = any(k in q_lower for k in [
+        "encrypt", "decrypt", "calculation", "step by step", "calculate", 
+        "find the ciphertext", "compute", "show the calculation"
+    ])
+    if not is_calc:
+        return None
+
+    is_decrypt = "decrypt" in q_lower
+
+    # Match matrix like [[2,3],[3,4]] or [[3, 3], [2, 5]] or [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    matrix_match = re.search(
+        r'\[\s*\[\s*([\d\s,\-]+)\s*\]\s*,\s*\[\s*([\d\s,\-]+)\s*\](?:\s*,\s*\[\s*([\d\s,\-]+)\s*\])?\s*\]',
+        query
+    )
+    if not matrix_match:
+        return None
+
+    rows_raw = [matrix_match.group(1), matrix_match.group(2)]
+    if matrix_match.group(3):
+        rows_raw.append(matrix_match.group(3))
+
+    matrix = []
+    for r_str in rows_raw:
+        nums = [int(n.strip()) for n in re.split(r'[,\s]+', r_str.strip()) if n.strip()]
+        matrix.append(nums)
+
+    n = len(matrix)
+    for r in matrix:
+        if len(r) != n:
+            return None
+
+    # Find target text: e.g. "plaintext CD", "plaintext 'CD'", "encrypt AB"
+    target_text = None
+    text_match = re.search(r'(?:plaintext|ciphertext|text|message)\s*[:=]?\s*[\'"]?([A-Za-z]{2,12})[\'"]?', query, re.IGNORECASE)
+    if text_match:
+        target_text = text_match.group(1).upper()
+    else:
+        # Search for standalone uppercase words not in keywords
+        exclude = {
+            "USING", "THE", "HILL", "CIPHER", "ENCRYPT", "DECRYPT", "WITH", "KEY", 
+            "MATRIX", "SHOW", "CALCULATION", "STEP", "BY", "FIND", "AND", "PLAIN", 
+            "TEXT", "CIPHERTEXT", "CODE"
+        }
+        words = re.findall(r'\b[A-Za-z]{2,12}\b', query)
+        for w in words:
+            if w.upper() not in exclude and len(w) <= 8:
+                target_text = w.upper()
+                break
+
+    if not target_text:
+        return None
+
+    return {
+        "operation": "decrypt" if is_decrypt else "encrypt",
+        "matrix": matrix,
+        "n": n,
+        "text": target_text
+    }
+
+def solve_hill_cipher(problem: Dict[str, Any]) -> Tuple[str, str]:
+    op = problem["operation"]
+    K = problem["matrix"]
+    n = problem["n"]
+    text = problem["text"]
+
+    if op == "encrypt":
+        pad_len = (n - (len(text) % n)) % n
+        padded_text = text + ("X" * pad_len)
+        letter_vals = [ord(c) - ord('A') for c in padded_text]
+        
+        steps = []
+        steps.append(f"To encrypt the plaintext **{text}** using the Hill cipher ($C = KP \\bmod 26$), follow these steps:\n")
+        steps.append("### Step 1: Convert Plaintext Letters to Numerical Values")
+        steps.append("Using the standard convention ($A=0, B=1, C=2, \\dots, Z=25$):")
+        char_mappings = [f"**{c}** $\\to {ord(c) - ord('A')}$" for c in padded_text]
+        steps.append("- " + ", ".join(char_mappings) + "\n")
+        
+        ciphertext_chars = []
+        
+        for b_idx in range(0, len(padded_text), n):
+            block_chars = padded_text[b_idx:b_idx+n]
+            P = letter_vals[b_idx:b_idx+n]
+            
+            p_vec_str = "\\begin{pmatrix} " + " \\\\ ".join(str(p) for p in P) + " \\end{pmatrix}"
+            k_mat_str = "\\begin{pmatrix} " + " \\\\ ".join(" & ".join(str(v) for v in row) for row in K) + " \\end{pmatrix}"
+            
+            steps.append(f"### Step 2: Form Plaintext Vector and Key Matrix")
+            steps.append(f"Plaintext block **{block_chars}** represented as column vector $P$:\n")
+            steps.append(f"$$P = {p_vec_str}, \\quad K = {k_mat_str}$$\n")
+            
+            steps.append("### Step 3: Perform Matrix Multiplication ($KP$)")
+            kp_calc_lines = []
+            KP = []
+            for i in range(n):
+                mult_terms = [f"{K[i][j]} \\times {P[j]}" for j in range(n)]
+                row_sum = sum(K[i][j] * P[j] for j in range(n))
+                KP.append(row_sum)
+                kp_calc_lines.append(f"\\text{{Row {i+1}}}: " + " + ".join(mult_terms) + f" = {row_sum}")
+            
+            steps.append("Multiply each row of key matrix $K$ by column vector $P$:\n")
+            for line in kp_calc_lines:
+                steps.append(f"- $${line}$$")
+            
+            kp_vec_str = "\\begin{pmatrix} " + " \\\\ ".join(str(val) for val in KP) + " \\end{pmatrix}"
+            steps.append(f"\n$$KP = {kp_vec_str}$$\n")
+            
+            steps.append("### Step 4: Reduce Modulo 26 ($C = KP \\bmod 26$)")
+            C = [val % 26 for val in KP]
+            c_calc_lines = [f"{val} \\bmod 26 = {val % 26}" for val in KP]
+            for line in c_calc_lines:
+                steps.append(f"- $${line}$$")
+                
+            c_vec_str = "\\begin{pmatrix} " + " \\\\ ".join(str(val) for val in C) + " \\end{pmatrix}"
+            steps.append(f"\n$$C = {c_vec_str}$$\n")
+            
+            steps.append("### Step 5: Convert Numbers Back to Ciphertext Letters")
+            block_cipher = "".join(chr(val + ord('A')) for val in C)
+            for val, c_char in zip(C, block_cipher):
+                steps.append(f"- ${val} \\to$ **{c_char}**")
+                
+            ciphertext_chars.append(block_cipher)
+            
+        final_cipher = "".join(ciphertext_chars)
+        steps.append(f"\n**Final Ciphertext**: **{final_cipher}**\n")
+        steps.append("Think about this: why must the calculated numerical values be reduced modulo 26 before mapping them back to alphabet characters?")
+        
+        socratic_q = "Why must the calculated numerical values be reduced modulo 26 before mapping them back to alphabet characters?"
+        return "\n".join(steps), socratic_q
+
+    else:
+        # Decryption for 2x2 matrix
+        if n == 2:
+            a, b = K[0][0], K[0][1]
+            c, d = K[1][0], K[1][1]
+            det = (a * d - b * c) % 26
+            
+            # Find modular inverse of det mod 26
+            det_inv = None
+            for x in range(1, 26):
+                if (det * x) % 26 == 1:
+                    det_inv = x
+                    break
+                    
+            if det_inv is None:
+                err_msg = (
+                    f"The key matrix $K = \\begin{{pmatrix}} {a} & {b} \\\\ {c} & {d} \\end{{pmatrix}}$ has determinant "
+                    f"$|K| = ({a}\\times{d} - {b}\\times{c}) \\bmod 26 = {det}$.\n\n"
+                    f"Because $\\gcd({det}, 26) \\neq 1$, $|K|$ has no modular inverse modulo 26. "
+                    "Therefore, this key matrix cannot be used for unique decryption.\n\n"
+                    "Think about this: why does calculating the modular inverse of the determinant require that $\\gcd(|K|, 26) = 1$?"
+                )
+                return err_msg, "Why does calculating the modular inverse of the determinant require that gcd(|K|, 26) = 1?"
+
+            # Adjoint of 2x2: [[d, -b], [-c, a]] mod 26
+            adj = [[d % 26, (-b) % 26], [(-c) % 26, a % 26]]
+            # K_inv = det_inv * adj mod 26
+            K_inv = [[(det_inv * adj[i][j]) % 26 for j in range(2)] for i in range(2)]
+
+            pad_len = (2 - (len(text) % 2)) % 2
+            padded_text = text + ("X" * pad_len)
+            c_vals = [ord(ch) - ord('A') for ch in padded_text]
+
+            steps = [
+                f"To decrypt the ciphertext **{text}** using the Hill cipher ($P = K^{{-1}}C \\bmod 26$):\n",
+                "### Step 1: Calculate Determinant and Modular Inverse",
+                f"- Determinant: $|K| = ({a} \\times {d} - {b} \\times {c}) = {a*d - b*c} \\equiv {det} \\pmod{{26}}$",
+                f"- Modular multiplicative inverse: $|K|^{{-1}} \\equiv {det_inv} \\pmod{{26}}$ (since ${det} \\times {det_inv} = {det * det_inv} \\equiv 1 \\pmod{{26}}$)\n",
+                "### Step 2: Compute Inverse Key Matrix ($K^{-1}$)",
+                f"$$K^{{-1}} = {det_inv} \\times \\begin{{pmatrix}} {adj[0][0]} & {adj[0][1]} \\\\ {adj[1][0]} & {adj[1][1]} \\end{{pmatrix}} \\equiv \\begin{{pmatrix}} {K_inv[0][0]} & {K_inv[0][1]} \\\\ {K_inv[1][0]} & {K_inv[1][1]} \\end{{pmatrix}} \\pmod{{26}}$$\n",
+                "### Step 3: Decrypt Ciphertext Vector ($P = K^{-1}C \\bmod 26$)"
+            ]
+
+            plaintext_chars = []
+            for b_idx in range(0, len(padded_text), 2):
+                C_vec = c_vals[b_idx:b_idx+2]
+                P_vals = [
+                    (K_inv[0][0] * C_vec[0] + K_inv[0][1] * C_vec[1]) % 26,
+                    (K_inv[1][0] * C_vec[0] + K_inv[1][1] * C_vec[1]) % 26
+                ]
+                block_plain = "".join(chr(val + ord('A')) for val in P_vals)
+                plaintext_chars.append(block_plain)
+                steps.append(f"- Block **{padded_text[b_idx:b_idx+2]}** (${C_vec[0]}, {C_vec[1]}$) $\\to$ (${P_vals[0]}, {P_vals[1]}$) $\\to$ **{block_plain}**")
+
+            final_plain = "".join(plaintext_chars)
+            steps.append(f"\n**Decrypted Plaintext**: **{final_plain}**\n")
+            steps.append("Think about this: why does calculating the modular inverse of the determinant require that $\\gcd(|K|, 26) = 1$?")
+            return "\n".join(steps), "Why does calculating the modular inverse of the determinant require that gcd(|K|, 26) = 1?"
+        else:
+            steps = [
+                f"Decryption in the Hill cipher computes $P = K^{{-1}}C \\bmod 26$, where $K^{{-1}} = \\text{{adj}}(K) \\cdot |K|^{{-1}} \\bmod 26$.\n",
+                "Think about this: why does calculating the modular inverse of the determinant require that $\\gcd(|K|, 26) = 1$?"
+            ]
+            return "\n".join(steps), "Why does calculating the modular inverse of the determinant require that gcd(|K|, 26) = 1?"
+
+# ==============================================================================
+# Domain-Specific Response Generators
+# ==============================================================================
+
+def generate_hill_cipher_response(query: str) -> Tuple[str, str]:
+    q_lower = query.lower()
+
+    # 1. Numerical calculation question
+    prob = parse_hill_cipher_problem(query)
+    if prob:
+        return solve_hill_cipher(prob)
+
+    # 2. Invertibility / Key Matrix condition question
+    if any(k in q_lower for k in ["invertib", "inverse modulo", "why must the key", "why must", "determinant", "coprime", "modulo 26 inverse"]):
+        answer = (
+            "In the Hill cipher, the key matrix $K$ must possess a modular inverse modulo 26 so that ciphertext blocks can be uniquely decrypted back into plaintext ($P = K^{-1}C \\bmod 26$).\n\n"
+            "### Conditions for Invertibility\n"
+            "A key matrix $K$ is invertible modulo 26 if and only if:\n"
+            "1. Its determinant is non-zero: $|K| \\neq 0$.\n"
+            "2. Its determinant is **coprime to 26**: $\\gcd(|K|, 26) = 1$.\n\n"
+            "The modular inverse is computed using the matrix adjoint:\n"
+            "$$K^{-1} = \\text{adj}(K) \\cdot |K|^{-1} \\bmod 26$$\n\n"
+            "Because the alphabet size is 26 ($26 = 2 \\times 13$), any determinant that is even or a multiple of 13 shares a common factor with 26 and has no multiplicative inverse modulo 26. Without an inverse, multiple plaintext blocks would map to the same ciphertext, making unique decryption impossible.\n\n"
+            "Think about this: if two different plaintext blocks could produce the exact same ciphertext, would decryption be able to determine which plaintext was original?"
+        )
+        socratic_q = "If two different plaintext blocks could produce the exact same ciphertext, would decryption be able to determine which plaintext was original?"
+        return answer, socratic_q
+
+    # 3. Formula / Notation question
+    if any(k in q_lower for k in ["formula", "notation", "equation"]):
+        answer = (
+            "The mathematical formulation of the Hill cipher operates over blocks of letters using linear algebra modulo 26:\n\n"
+            "### Encryption Formula\n"
+            "$$C = KP \\bmod 26$$\n\n"
+            "### Decryption Formula\n"
+            "$$P = K^{-1}C \\bmod 26$$\n\n"
+            "### Symbol Definitions\n"
+            "- $P$: Column vector of $n$ plaintext letters ($A=0, B=1, \\dots, Z=25$).\n"
+            "- $C$: Column vector of $n$ ciphertext letters.\n"
+            "- $K$: Square $n \\times n$ secret key matrix.\n"
+            "- $K^{-1}$: Modular inverse key matrix, calculated as $K^{-1} = \\text{adj}(K) \\cdot |K|^{-1} \\bmod 26$.\n\n"
+            "Think about this: what condition must the key matrix $K$ satisfy so that the decryption formula $P = K^{-1}C \\bmod 26$ can be evaluated?"
+        )
+        socratic_q = "What condition must the key matrix K satisfy so that the decryption formula P = K^(-1)C mod 26 can be evaluated?"
+        return answer, socratic_q
+
+    # 4. Prerequisite question
+    if any(k in q_lower for k in ["prereq", "prerequisite", "required to understand"]):
+        answer = (
+            "To understand and implement the Hill cipher, three foundational mathematical concepts are required:\n\n"
+            "1. **Matrix Multiplication**: Multiplying an $n \\times n$ square key matrix by an $n \\times 1$ column vector.\n"
+            "2. **Matrix Determinant & Adjoint**: Calculating $|K|$ and $\\text{adj}(K)$ to test for invertibility and construct $K^{-1}$.\n"
+            "3. **Modular Arithmetic**: Performing arithmetic modulo 26 and finding modular multiplicative inverses using the Extended Euclidean Algorithm.\n\n"
+            "Think about this: how does matrix arithmetic modulo 26 differ from standard linear algebra over real numbers?"
+        )
+        socratic_q = "How does matrix arithmetic modulo 26 differ from standard linear algebra over real numbers?"
+        return answer, socratic_q
+
+    # 5. Corner cases / security / attacks question
+    if any(k in q_lower for k in ["corner case", "scalability", "vulnerabilit", "weakness", "known plaintext", "attack"]):
+        answer = (
+            "The Hill cipher presents specific operational edge cases and security properties:\n\n"
+            "- **Plaintext Padding**: If the message length is not an exact multiple of the matrix size $n$, filler characters (such as 'X') must be appended.\n"
+            "- **Invertibility Failures**: If $\\gcd(|K|, 26) \\neq 1$, the key matrix cannot decrypt ciphertext.\n"
+            "- **Known-Plaintext Vulnerability**: Because the Hill cipher is purely linear ($C = KP \\bmod 26$), an adversary who intercepts $n$ linearly independent plaintext-ciphertext vector pairs can solve $K = C \\cdot P^{-1} \\bmod 26$ and completely recover the secret key.\n\n"
+            "Think about this: if an adversary intercepts $n$ known plaintext-ciphertext vector pairs, how can they reconstruct the secret key matrix $K$?"
+        )
+        socratic_q = "If an adversary intercepts n known plaintext-ciphertext vector pairs, how can they reconstruct the secret key matrix K?"
+        return answer, socratic_q
+
+    # 6. Concise Definition & Mechanism question (Default)
+    answer = (
+        "A **Hill cipher** is a classical polygraphic symmetric substitution cipher grounded in linear algebra and modular arithmetic modulo 26.\n\n"
+        "It encrypts plaintext by dividing letters into blocks of size $n$, mapping each letter to its alphabetical index ($A=0, B=1, \\dots, Z=25$) to form a column vector $P$. The vector is then multiplied by an $n \\times n$ secret key matrix $K$ modulo 26:\n"
+        "$$C = KP \\bmod 26$$\n\n"
+        "The resulting integers are converted back into letters to produce the ciphertext block $C$.\n\n"
+        "Think about this: how does transforming blocks of letters together provide stronger resistance against letter frequency analysis compared to monoalphabetic ciphers?"
+    )
+    socratic_q = "How does transforming blocks of letters together provide stronger resistance against letter frequency analysis compared to monoalphabetic ciphers?"
+    return answer, socratic_q
+
 def _generate_socratic_response(
     query: str,
     topic_name: Optional[str],
@@ -134,6 +417,13 @@ def _generate_socratic_response(
     if grounding_excerpt and len(grounding_excerpt) > 300:
         grounding_excerpt = grounding_excerpt[:300] + "..."
 
+    # Check if this is a numerical Hill cipher problem first (deterministic mathematical calculation)
+    if ("hill" in q_lower or "hill" in clean_topic.lower() or "cipher" in q_lower):
+        prob = parse_hill_cipher_problem(query)
+        if prob:
+            direct_answer, socratic_q = solve_hill_cipher(prob)
+            return direct_answer, socratic_q, grounding_excerpt, top_sim, top_src
+
     # Step 2.3: Check if an external LLM key is configured (Groq / Gemini / OpenAI)
     groq_api_key = os.getenv("GROQ_API_KEY")
     if groq_api_key:
@@ -147,16 +437,15 @@ def _generate_socratic_response(
             prereq_text = ", ".join([p["prereq_topic_name"] for p in prereqs]) if prereqs else "None"
 
             prompt = f"""You are a dedicated, encouraging, and academically rigorous Socratic STEM Tutor.
-Ground your response strictly in the provided validated course textbook passages.
+Answer the student's specific question directly, using the provided course textbook excerpts as factual grounding.
 
 Rules:
-1. Answer the student's question directly, clearly, and thoroughly at an appropriate university learning level.
-2. Ground all factual assertions, formulas, and mechanisms in the textbook excerpts below.
-3. Do NOT include course codes (e.g., UE22CS...), slide numbers, file names, or administrative boilerplate.
-4. Do NOT output raw bullet lists of slide titles.
-5. Never invent facts or equations not supported by the context.
-6. Conclude your explanation with exactly ONE thoughtful Socratic follow-up question that challenges the student to reason about an underlying invariant, trade-off, or mechanism.
-7. The Socratic follow-up question MUST relate directly to the concept discussed. Never generate unrelated questions about networking, packet drops, or latency unless the topic is specifically computer networks.
+1. Focus directly on the specific question asked. If a definition is requested, provide a concise definition. If a formula is requested, explain the formula. If a numerical problem is presented, calculate the steps and state the final answer.
+2. Do NOT append unnecessary generic boilerplate or fixed theoretical paragraphs.
+3. Ground all factual assertions, formulas, and mechanisms in the textbook excerpts below.
+4. Do NOT include course codes (e.g., UE22CS...), slide numbers, file names, or administrative boilerplate.
+5. Conclude your explanation with exactly ONE thoughtful Socratic follow-up question directly related to the current inquiry.
+6. Never generate unrelated questions about networking, packet drops, or latency unless the topic is specifically computer networks.
 
 Textbook Excerpts:
 {context_text}
@@ -173,7 +462,6 @@ Student Question: {query}"""
             )
             raw_answer = completion.choices[0].message.content.strip()
 
-            # Extract Socratic question if present at the end
             lines = raw_answer.splitlines()
             socratic_q = None
             for l in reversed(lines):
@@ -182,33 +470,20 @@ Student Question: {query}"""
                     break
 
             if not socratic_q:
-                socratic_q = f"How do the underlying invariants of {clean_topic} govern its behavior under different constraints?"
+                socratic_q = f"How do the underlying principles of {clean_topic} apply in this context?"
                 raw_answer += f"\n\nThink about this: {socratic_q}"
 
             return raw_answer, socratic_q, grounding_excerpt, top_sim, top_src
         except Exception:
             pass
 
-    # High-quality grounded local synthesis (when offline or no LLM key configured)
+    # High-quality question-tailored local synthesis (when offline or no LLM key configured)
     combined_chunk_text = " ".join([_clean_chunk_text(c["document"]).lower() for c in chunks])
 
     # 1. Cryptography: Hill Cipher
-    if "hill" in q_lower or "hill" in clean_topic.lower() or "hill" in combined_chunk_text or "cipher" in q_lower:
-        direct_answer = (
-            "A **Hill cipher** is a classical polygraphic symmetric encryption algorithm grounded in linear algebra and modular arithmetic modulo 26.\n\n"
-            "### Fundamental Mechanisms\n"
-            "1. **Vector Representation**: Plaintext is divided into blocks of size $n$. Each letter is converted to its numerical equivalent ($A=0, B=1, \\dots, Z=25$) to form a column vector $P$.\n"
-            "2. **Encryption**: The plaintext vector is multiplied by an $n \\times n$ square key matrix $K$ modulo 26:\n"
-            "   $$C = K \\cdot P \\pmod{26}$$\n"
-            "3. **Decryption**: Plaintext is recovered by multiplying the ciphertext vector by the modular inverse of the key matrix:\n"
-            "   $$P = K^{-1} \\cdot C \\pmod{26}$$\n\n"
-            "### Invariant Guarantee: Matrix Invertibility\n"
-            "For decryption to be uniquely possible, the key matrix $K$ must possess a valid inverse modulo 26 ($K^{-1} = \\text{adj}(K) \\cdot |K|^{-1} \\pmod{26}$). This requires that:\n"
-            "- The determinant $|K| \\neq 0$.\n"
-            "- The determinant must be **coprime to 26**, meaning $\\gcd(|K|, 26) = 1$.\n\n"
-            "Think about this: if two different plaintext blocks could produce the exact same ciphertext, would decryption be able to determine which plaintext was original?"
-        )
-        socratic_q = "If two different plaintext blocks could produce the exact same ciphertext, would decryption be able to determine which plaintext was original?"
+    if "hill" in q_lower or "hill" in clean_topic.lower() or "hill" in combined_chunk_text or ("cipher" in q_lower and "5_hill" in str(top_src).lower()):
+        direct_answer, socratic_q = generate_hill_cipher_response(query)
+        return direct_answer, socratic_q, grounding_excerpt, top_sim, top_src
 
     # 2. DSA: Arrays & Pointers
     elif "array" in q_lower or "pointer" in q_lower or "contiguous" in q_lower or "element_size" in q_lower or "spatial locality" in q_lower:
@@ -340,91 +615,8 @@ Student Question: {query}"""
         )
         socratic_q = "How does quantum entanglement allow two qubits to exhibit correlated states without violating the no-communication theorem?"
 
-    # 12. Mechanical Engineering: Solar & Wind
-    elif "solar" in q_lower or "photovoltaic" in q_lower or "pv cell" in q_lower:
-        direct_answer = (
-            "**Solar Power** converts radiant light from the sun directly into electricity using the photovoltaic effect or into thermal energy for heating applications.\n\n"
-            "- **Solar Photovoltaic (PV) Cells**: Semiconductor p-n junction conversion devices that absorb incident photon energy to generate electrical current.\n"
-            "- **Operating Voltage**: Each individual silicon solar cell typically produces an open-circuit voltage of approximately 0.5V to 0.6V. Cells are wired in series and parallel to form modules and arrays.\n"
-            "- **Conversion Modes**: Helio-Electrical (direct DC electricity), Helio-Thermal (heating working fluids), and Helio-Chemical (solar-driven reactions).\n\n"
-            "Think about this: what semiconductor bandgap and thermal recombination factors limit single-junction silicon solar cells to ~20% practical efficiency compared to multi-junction cells?"
-        )
-        socratic_q = "What semiconductor bandgap and thermal recombination factors limit single-junction silicon solar cells to ~20% practical efficiency compared to multi-junction cells?"
-
-    elif "wind" in q_lower and ("energy" in q_lower or "power" in q_lower or "turbine" in q_lower):
-        direct_answer = (
-            "**Wind Energy** harnesses the kinetic energy of atmospheric air currents using aerodynamic turbine blades to drive an electrical generator shaft.\n\n"
-            "- **Aerodynamic Lift**: Airflow across airfoil-shaped blades produces lift, creating rotational torque on the main rotor shaft.\n"
-            "- **Betz Limit**: A wind turbine can extract a theoretical maximum of **59.3% (the Betz Limit)** of kinetic energy from the wind stream.\n"
-            "- **Configurations**: Horizontal Axis Wind Turbines (HAWT) featuring active yaw mechanisms, and Vertical Axis Wind Turbines (VAWT) operating omnidirectionally.\n\n"
-            "Think about this: why does the Betz limit establish that no wind turbine can convert more than 16/27 (~59.3%) of kinetic wind energy, regardless of blade design?"
-        )
-        socratic_q = "Why does the Betz limit establish that no wind turbine can convert more than 16/27 (~59.3%) of kinetic wind energy, regardless of blade design?"
-
-    # 13. Mechanical Engineering: Turbines & Engines
-    elif "turbine" in q_lower or "prime mover" in q_lower:
-        direct_answer = (
-            "**Turbines** are rotary mechanical prime movers that extract thermodynamic enthalpy from a high-pressure, high-velocity fluid (steam, gas, or water) and convert it into rotational shaft work.\n\n"
-            "- **Impulse Turbines (e.g., Pelton Wheel)**: Complete fluid pressure drop occurs entirely across stationary nozzles, creating high-velocity kinetic jets with zero pressure drop across the moving rotor blades.\n"
-            "- **Reaction Turbines (e.g., Francis, Kaplan)**: Fluid pressure drops continuously across both stationary guide vanes and moving rotor blades, generating a reaction thrust force driving rotation.\n\n"
-            "Think about this: why do reaction turbines require blade-tip sealing and thrust balancing drums that are unnecessary in pure impulse turbines?"
-        )
-        socratic_q = "Why do reaction turbines require blade-tip sealing and thrust balancing drums that are unnecessary in pure impulse turbines?"
-
-    elif "engine" in q_lower or "diesel" in q_lower or "petrol" in q_lower or "ic engine" in q_lower:
-        direct_answer = (
-            "**Internal Combustion (IC) Engines** are thermal prime movers in which fuel combustion takes place directly inside a working cylinder, expanding high-pressure combustion gases against a reciprocating piston.\n\n"
-            "### 4-Stroke Operating Cycle\n"
-            "1. **Suction**: Piston travels TDC to BDC, drawing in charge (air-fuel mixture in Petrol/SI, pure air in Diesel/CI).\n"
-            "2. **Compression**: Both valves closed; piston compresses the charge, elevating temperature and pressure.\n"
-            "3. **Power / Expansion**: Ignition occurs (spark plug in SI, auto-ignition from high compression in CI); expanding gases produce shaft work.\n"
-            "4. **Exhaust**: Exhaust valve opens; piston sweeps burnt gases out of the cylinder.\n\n"
-            "Think about this: why can Diesel (CI) engines operate at significantly higher compression ratios than Petrol (SI) engines without experiencing destructive engine knocking?"
-        )
-        socratic_q = "Why can Diesel (CI) engines operate at significantly higher compression ratios than Petrol (SI) engines without experiencing destructive engine knocking?"
-
-    # 14. Mechanical: Machine Tools, Materials & Manufacturing
-    elif "lathe" in q_lower or "machin" in q_lower:
-        direct_answer = (
-            "A **Lathe** is the fundamental machine tool used to remove material from a rotating workpiece using a rigidly clamped single-point cutting tool.\n\n"
-            "- **Turning**: Reducing outer cylindrical diameter along the workpiece longitudinal axis.\n"
-            "- **Facing**: Machining a flat, perpendicular surface at the end of the workpiece, reducing length.\n"
-            "- **Taper Turning**: Generating a uniform conical surface by swiveling the compound rest or using a taper attachment.\n\n"
-            "Think about this: how does cutting speed affect tool-chip interface temperature and tool wear according to the Taylor tool life equation ($VT^n = C$)?"
-        )
-        socratic_q = "How does cutting speed affect tool-chip interface temperature and tool wear according to the Taylor tool life equation ($VT^n = C$)?"
-
-    elif "robot" in q_lower or "scara" in q_lower:
-        direct_answer = (
-            "An **Industrial Robot** is an automatically controlled, reprogrammable manipulator programmable in three or more axes for automated industrial manufacturing.\n\n"
-            "- **SCARA (RRP)**: 2 parallel rotary joints for horizontal planar motion and 1 vertical linear axis; rigid in vertical Z-axis while compliant horizontally for precision pick-and-place assembly.\n"
-            "- **Articulated (RRR)**: 3 or more rotary joints mimicking human arm mobility; offers the largest work volume relative to footprint.\n\n"
-            "Think about this: why is the SCARA robot arm specifically engineered with selective compliance—high stiffness vertically but compliant laterally in the X-Y plane?"
-        )
-        socratic_q = "Why is the SCARA robot arm specifically engineered with selective compliance—high stiffness vertically but compliant laterally in the X-Y plane?"
-
-    elif "material" in q_lower or "composite" in q_lower or "alloy" in q_lower:
-        direct_answer = (
-            "**Engineering Materials** are classified into ferrous and non-ferrous metals, ceramics, polymers, composites, and smart materials based on crystalline structure and physical properties.\n\n"
-            "- **Ferrous Metals & Alloys**: Iron-based alloys including Cast Irons (>2% C), Carbon Steels (0.05%–1.5% C), and Stainless Steels alloyed with Chromium (>10.5%).\n"
-            "- **Composite Materials**: Combinations of a continuous **matrix phase** and a dispersed **reinforcement phase** (e.g., carbon fibers in polymer matrix), providing high specific strength.\n\n"
-            "Think about this: how does the fiber-matrix interface in composite materials transfer shear stress to arrest crack propagation compared to homogenous metals?"
-        )
-        socratic_q = "How does the fiber-matrix interface in composite materials transfer shear stress to arrest crack propagation compared to homogenous metals?"
-
-    elif "weld" in q_lower or "braz" in q_lower or "solder" in q_lower:
-        direct_answer = (
-            "**Joining Processes** are fabrication techniques used to unite workpieces by localized coalescence or adhesion.\n\n"
-            "- **Welding**: Base metals are melted at their interface with or without filler material; joint strength equals or exceeds parent metal.\n"
-            "- **Brazing**: Base metals are not melted; joined using a non-ferrous filler metal with melting point **above 450°C** flowing via capillary action.\n"
-            "- **Soldering**: Base metals are not melted; joined using a filler alloy with melting point **below 450°C**.\n\n"
-            "Think about this: why does the Heat Affected Zone (HAZ) in fusion welding exhibit different microstructural and mechanical properties compared to the unaffected parent metal?"
-        )
-        socratic_q = "Why does the Heat Affected Zone (HAZ) in fusion welding exhibit different microstructural and mechanical properties compared to the unaffected parent metal?"
-
-    # 15. Dynamic / Arbitrary Uploaded Textbook Course Materials
+    # 12. Dynamic / Arbitrary Uploaded Textbook Course Materials
     else:
-        # Synthesize directly from cleaned substantive sentences
         extracted_facts = []
         for ch in chunks[:3]:
             cleaned_text = _clean_chunk_text(ch["document"])
@@ -435,8 +627,8 @@ Student Question: {query}"""
                         extracted_facts.append(sentence)
 
         if extracted_facts:
-            body = " ".join(extracted_facts[:5])
-            socratic_q = f"How do the core mechanisms and invariants of {clean_topic} behave when operating under altered system constraints or boundary conditions?"
+            body = " ".join(extracted_facts[:4])
+            socratic_q = f"How do the core principles and mechanisms of {clean_topic} apply when solving practical problems in this domain?"
             direct_answer = (
                 f"**{clean_topic}**\n\n"
                 f"{body}\n\n"
@@ -473,7 +665,6 @@ def socratic_tutor_query(req: TutorQueryRequest):
             (req.topic_id, req.subject_id)
         )
         if not target_topic:
-            # Topic belongs to another subject or is invalid; fallback to first topic of this subject
             target_topic = execute_one(
                 "SELECT topic_id, topic_name, difficulty_level, visual_type FROM TOPICS WHERE subject_id = %s ORDER BY topic_id ASC LIMIT 1",
                 (req.subject_id,)
@@ -483,12 +674,10 @@ def socratic_tutor_query(req: TutorQueryRequest):
             prereqs = _fetch_prerequisite_chain(target_topic["topic_id"])
             allowed_topic_ids = [target_topic["topic_id"]] + [p["prereq_topic_id"] for p in prereqs]
 
-    # Clean concept name for internal query context
     active_concept_name = target_topic["topic_name"] if target_topic else subject["subject_name"]
     clean_concept = _clean_concept_name(active_concept_name)
 
     # 2. Dense Vector Retrieval (ChromaDB)
-    # Determine candidate pool size to ensure substantive passages aren't crowded out by empty slides
     stats = vector_service.get_stats(subject_key)
     total_col_chunks = stats.get("total_chunks", 0)
     candidate_limit = min(20, max(8, total_col_chunks)) if total_col_chunks > 0 else 8
@@ -496,7 +685,7 @@ def socratic_tutor_query(req: TutorQueryRequest):
     relational_filter_applied = False
     raw_chunks: List[Dict] = []
 
-    # Step 2.1 & 2.2: Try relational prerequisite-guided search first
+    # Try relational prerequisite-guided search first
     if allowed_topic_ids and req.include_prereqs:
         try:
             where_filter = {"topic_id": {"$in": allowed_topic_ids}}
@@ -521,7 +710,7 @@ def socratic_tutor_query(req: TutorQueryRequest):
             n_results=candidate_limit
         )
 
-    # If the user query is very short or a general template, also consider augmented query
+    # If the user query is short or template-based, augment with clean concept
     substantive_chunks = [c for c in raw_chunks if _is_substantive_chunk(c["document"])]
     if not substantive_chunks and clean_concept and clean_concept.lower() not in req.query.lower():
         augmented_query = f"{clean_concept} {req.query}"
@@ -532,7 +721,6 @@ def socratic_tutor_query(req: TutorQueryRequest):
         )
         aug_substantive = [c for c in augmented_chunks if _is_substantive_chunk(c["document"])]
         if aug_substantive:
-            # Merge while preserving uniqueness
             seen_ids = set()
             merged = []
             for c in raw_chunks + augmented_chunks:
@@ -550,7 +738,7 @@ def socratic_tutor_query(req: TutorQueryRequest):
     top_src = grounding_chunks[0].get("metadata", {}).get("file_name", "Course Textbook") if grounding_chunks else None
     grounding_excerpt = _clean_chunk_text(grounding_chunks[0]["document"])[:300] if grounding_chunks else None
 
-    # 3. Generate Socratic Tutor Answer Grounded in Validated Textbook Passages
+    # 3. Generate Socratic Tutor Answer Tailored to Question Type
     direct_answer, reflection_q, grounding_excerpt, top_sim, top_source = _generate_socratic_response(
         query=req.query,
         topic_name=active_concept_name,

@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ArrowRight,
 } from "lucide-react";
+import katex from "katex";
 
 interface TutorChatProps {
   subjects: Subject[];
@@ -332,93 +333,303 @@ export function TutorChat({
   );
 }
 
-// Clean helper to parse and render Markdown formatted text
+// Helper component to render KaTeX math expressions
+function MathSnippet({
+  tex,
+  displayMode = false,
+  isUser = false,
+}: {
+  tex: string;
+  displayMode?: boolean;
+  isUser?: boolean;
+}) {
+  if (!tex || !tex.trim()) return null;
+
+  try {
+    const html = katex.renderToString(tex.trim(), {
+      displayMode,
+      throwOnError: false,
+      strict: false,
+    });
+    return (
+      <span
+        dangerouslySetInnerHTML={{ __html: html }}
+        className={
+          displayMode
+            ? `block my-2.5 text-center overflow-x-auto py-1 ${
+                isUser ? "text-white" : "text-orange-200"
+              }`
+            : `inline-block align-baseline mx-0.5 ${
+                isUser ? "text-white" : "text-orange-100"
+              }`
+        }
+      />
+    );
+  } catch {
+    return <code className="font-mono text-xs">{tex}</code>;
+  }
+}
+
+// Tokenize and render inline text, math ($...$, \(...\), $$...$$, \[...\]), bold (**...**), and code (`...`)
+function renderInlineContent(rawText: string, isUser: boolean = false): React.ReactNode {
+  // Normalize escaped asterisks if present e.g. \*\* -> **
+  const text = rawText.replace(/\\\*/g, "*");
+
+  const regex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[^\$\n]+?\$|\\\([^\n]+?\\\)|(?:\*\*|__)[^\*\n]+?(?:\*\*|__)|`[^`\n]+?`)/g;
+
+  const elements: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      elements.push(text.slice(lastIndex, match.index));
+    }
+
+    const m = match[0];
+    const key = `inline_${match.index}`;
+
+    if (m.startsWith("$$") && m.endsWith("$$")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(2, -2)} displayMode={true} isUser={isUser} />
+      );
+    } else if (m.startsWith("\\[") && m.endsWith("\\]")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(2, -2)} displayMode={true} isUser={isUser} />
+      );
+    } else if (m.startsWith("$") && m.endsWith("$")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(1, -1)} displayMode={false} isUser={isUser} />
+      );
+    } else if (m.startsWith("\\(") && m.endsWith("\\)")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(2, -2)} displayMode={false} isUser={isUser} />
+      );
+    } else if (
+      (m.startsWith("**") && m.endsWith("**")) ||
+      (m.startsWith("__") && m.endsWith("__"))
+    ) {
+      elements.push(
+        <strong
+          key={key}
+          className={`font-semibold ${isUser ? "text-white font-bold" : "text-zinc-100"}`}
+        >
+          {m.slice(2, -2)}
+        </strong>
+      );
+    } else if (m.startsWith("`") && m.endsWith("`")) {
+      elements.push(
+        <code
+          key={key}
+          className={`font-mono text-[10.5px] px-1 py-0.5 rounded ${
+            isUser ? "bg-orange-700/60 text-white" : "bg-zinc-800 text-zinc-300"
+          }`}
+        >
+          {m.slice(1, -1)}
+        </code>
+      );
+    } else {
+      elements.push(m);
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    elements.push(text.slice(lastIndex));
+  }
+
+  return elements;
+}
+
+interface ParsedBlock {
+  type: "h2" | "h3" | "h4" | "p" | "display_math" | "reflection" | "ol" | "ul";
+  content: string;
+}
+
+function parseContentBlocks(markdown: string): ParsedBlock[] {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const rawParagraphs = normalized.split(/\n\n+/);
+  const blocks: ParsedBlock[] = [];
+
+  for (const rawP of rawParagraphs) {
+    const trimmed = rawP.trim();
+    if (!trimmed) continue;
+
+    // Check if entire paragraph is standalone display math: $$...$$ or \[...\]
+    if (
+      (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length > 4) ||
+      (trimmed.startsWith("\\[") && trimmed.endsWith("\\]") && trimmed.length > 4)
+    ) {
+      const math = trimmed.startsWith("$$") ? trimmed.slice(2, -2) : trimmed.slice(2, -2);
+      blocks.push({ type: "display_math", content: math.trim() });
+      continue;
+    }
+
+    // Check if reflection block
+    if (
+      trimmed.startsWith("> ") ||
+      trimmed.startsWith("Think about this:") ||
+      trimmed.startsWith("**Socratic Reflection")
+    ) {
+      blocks.push({ type: "reflection", content: trimmed.replace(/^>\s*/, "") });
+      continue;
+    }
+
+    // Line by line breakdown to handle headings and lists embedded in single newlines
+    const lines = trimmed.split("\n");
+    let currentLines: string[] = [];
+    let currentType: "p" | "ol" | "ul" | null = null;
+
+    const flushCurrent = () => {
+      if (currentLines.length > 0) {
+        blocks.push({ type: currentType || "p", content: currentLines.join("\n") });
+        currentLines = [];
+        currentType = null;
+      }
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineTrim = line.trim();
+
+      if (lineTrim.startsWith("### ")) {
+        flushCurrent();
+        blocks.push({ type: "h4", content: lineTrim.replace(/^###\s+/, "") });
+      } else if (lineTrim.startsWith("## ")) {
+        flushCurrent();
+        blocks.push({ type: "h3", content: lineTrim.replace(/^##\s+/, "") });
+      } else if (lineTrim.startsWith("# ")) {
+        flushCurrent();
+        blocks.push({ type: "h2", content: lineTrim.replace(/^#\s+/, "") });
+      } else if (
+        (lineTrim.startsWith("$$") && lineTrim.endsWith("$$") && lineTrim.length > 4) ||
+        (lineTrim.startsWith("\\[") && lineTrim.endsWith("\\]") && lineTrim.length > 4)
+      ) {
+        flushCurrent();
+        const math = lineTrim.startsWith("$$") ? lineTrim.slice(2, -2) : lineTrim.slice(2, -2);
+        blocks.push({ type: "display_math", content: math.trim() });
+      } else if (/^\d+\.\s/.test(lineTrim)) {
+        if (currentType !== "ol") {
+          flushCurrent();
+          currentType = "ol";
+        }
+        currentLines.push(lineTrim);
+      } else if (/^[-*]\s/.test(lineTrim)) {
+        if (currentType !== "ul") {
+          flushCurrent();
+          currentType = "ul";
+        }
+        currentLines.push(lineTrim);
+      } else {
+        if (currentType === "ol" || currentType === "ul") {
+          flushCurrent();
+        }
+        currentLines.push(line);
+      }
+    }
+
+    flushCurrent();
+  }
+
+  return blocks;
+}
+
+// Clean helper to parse and render Markdown formatted text with KaTeX
 function renderFormattedContent(content: string, isUser: boolean = false) {
-  const paragraphs = content.split(/\n\n+/);
+  const blocks = parseContentBlocks(content);
 
   return (
-    <div className="space-y-3">
-      {paragraphs.map((p, pIdx) => {
-        // Heading ###
-        if (p.startsWith("### ")) {
+    <div className="space-y-2.5">
+      {blocks.map((b, idx) => {
+        if (b.type === "h2") {
           return (
-            <h4
-              key={pIdx}
-              className={`text-xs font-semibold pt-1.5 pb-1 border-b ${
-                isUser ? "text-white border-orange-400/40" : "text-zinc-100 border-zinc-800/60"
+            <h2
+              key={idx}
+              className={`text-sm font-bold pt-2 pb-1 border-b ${
+                isUser ? "text-white border-orange-400/40" : "text-zinc-100 border-zinc-800/80"
               }`}
             >
-              {p.replace("### ", "")}
-            </h4>
+              {renderInlineContent(b.content, isUser)}
+            </h2>
           );
         }
 
-        // Heading ##
-        if (p.startsWith("## ")) {
+        if (b.type === "h3") {
           return (
             <h3
-              key={pIdx}
-              className={`text-sm font-semibold pt-1.5 pb-1 border-b ${
-                isUser ? "text-white border-orange-400/40" : "text-zinc-100 border-zinc-800/60"
+              key={idx}
+              className={`text-xs font-bold pt-2 pb-1 border-b ${
+                isUser ? "text-white border-orange-400/40" : "text-zinc-100 border-zinc-800/80"
               }`}
             >
-              {p.replace("## ", "")}
+              {renderInlineContent(b.content, isUser)}
             </h3>
           );
         }
 
-        // Socratic reflection paragraph or blockquote
-        if (
-          p.startsWith("Think about this:") ||
-          p.startsWith("**Socratic Reflection") ||
-          p.startsWith("> ")
-        ) {
+        if (b.type === "h4") {
           return (
-            <div
-              key={pIdx}
-              className={`p-3 rounded-lg border-l-2 text-xs leading-relaxed ${
-                isUser
-                  ? "bg-orange-700/40 border-white text-white"
-                  : "bg-orange-950/20 border-orange-500/60 text-zinc-200 italic"
+            <h4
+              key={idx}
+              className={`text-xs font-semibold pt-1.5 pb-0.5 ${
+                isUser ? "text-white" : "text-orange-400"
               }`}
             >
-              {formatInlineText(p.replace(/^>\s*/, ""), isUser)}
+              {renderInlineContent(b.content, isUser)}
+            </h4>
+          );
+        }
+
+        if (b.type === "display_math") {
+          return <MathSnippet key={idx} tex={b.content} displayMode={true} isUser={isUser} />;
+        }
+
+        if (b.type === "reflection") {
+          return (
+            <div
+              key={idx}
+              className={`p-3 rounded-lg border-l-2 text-xs leading-relaxed my-2 ${
+                isUser
+                  ? "bg-orange-700/40 border-white text-white"
+                  : "bg-orange-950/20 border-orange-500/80 text-zinc-200 italic"
+              }`}
+            >
+              {renderInlineContent(b.content, isUser)}
             </div>
           );
         }
 
-        // Numbered list items
-        if (/^\d+\.\s/.test(p.trim())) {
-          const items = p.split("\n");
+        if (b.type === "ol") {
+          const items = b.content.split("\n");
           return (
             <ol
-              key={pIdx}
-              className={`space-y-1.5 pl-3 list-decimal list-inside text-xs leading-relaxed ${
+              key={idx}
+              className={`space-y-1.5 pl-4 list-decimal list-outside text-xs leading-relaxed ${
                 isUser ? "text-white" : "text-zinc-200"
               }`}
             >
               {items.map((it, iIdx) => (
                 <li key={iIdx}>
-                  {formatInlineText(it.replace(/^\d+\.\s/, ""), isUser)}
+                  {renderInlineContent(it.replace(/^\d+\.\s*/, ""), isUser)}
                 </li>
               ))}
             </ol>
           );
         }
 
-        // Bullet list items
-        if (/^[-*]\s/.test(p.trim())) {
-          const items = p.split("\n");
+        if (b.type === "ul") {
+          const items = b.content.split("\n");
           return (
             <ul
-              key={pIdx}
-              className={`space-y-1.5 pl-3 list-disc list-inside text-xs leading-relaxed ${
+              key={idx}
+              className={`space-y-1.5 pl-4 list-disc list-outside text-xs leading-relaxed ${
                 isUser ? "text-white" : "text-zinc-200"
               }`}
             >
               {items.map((it, iIdx) => (
                 <li key={iIdx}>
-                  {formatInlineText(it.replace(/^[-*]\s/, ""), isUser)}
+                  {renderInlineContent(it.replace(/^[-*]\s*/, ""), isUser)}
                 </li>
               ))}
             </ul>
@@ -427,46 +638,15 @@ function renderFormattedContent(content: string, isUser: boolean = false) {
 
         return (
           <p
-            key={pIdx}
+            key={idx}
             className={`leading-relaxed text-xs ${
               isUser ? "text-white font-normal" : "text-zinc-200"
             }`}
           >
-            {formatInlineText(p, isUser)}
+            {renderInlineContent(b.content, isUser)}
           </p>
         );
       })}
     </div>
   );
-}
-
-// Parse inline bold, code, and emphasis
-function formatInlineText(text: string, isUser: boolean = false): React.ReactNode {
-  // Regex to match **bold** and `code`
-  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
-  return parts.map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return (
-        <strong
-          key={index}
-          className={`font-semibold ${isUser ? "text-white font-bold" : "text-zinc-100"}`}
-        >
-          {part.slice(2, -2)}
-        </strong>
-      );
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return (
-        <code
-          key={index}
-          className={`font-mono text-[10.5px] px-1 py-0.5 rounded ${
-            isUser ? "bg-orange-700/60 text-white" : "bg-zinc-800 text-zinc-300"
-          }`}
-        >
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    return part;
-  });
 }
