@@ -28,7 +28,6 @@ export function Navbar({
   const navItems = [
     { id: "upload" as const, label: "Ingest", icon: UploadCloud },
     { id: "skilltree" as const, label: "Skill Tree", icon: GitFork, disabled: !hasDocument },
-    { id: "tutor" as const, label: "AI Tutor", icon: MessageSquare, disabled: !hasDocument },
     ...(isAdmin ? [{ id: "vectors" as const, label: "Vectors", icon: Database, disabled: false }] : []),
   ];
 

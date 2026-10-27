@@ -12,6 +12,11 @@ import {
   VectorChunk,
   TutorQueryRequest,
   TutorQueryResponse,
+  LearningSession,
+  ConversationMessage,
+  RecommendationResponse,
+  SubjectMasteryResponse,
+  SessionStage,
 } from "./types";
 
 const API_BASE =
@@ -148,4 +153,55 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  // ============================================================
+  // Member 2: Learning Session, Quiz & Mastery Client APIs (M2-APP1 & M2-APP2)
+  // ============================================================
+
+  startSession: (
+    userId: number,
+    subjectId: number,
+    currentTopicId?: number | null,
+    quizDifficulty: number = 1
+  ) =>
+    request<LearningSession>("/api/sessions/start", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: userId,
+        subject_id: subjectId,
+        current_topic_id: currentTopicId || undefined,
+        quiz_difficulty: quizDifficulty,
+      }),
+    }),
+
+  saveSessionMessage: (
+    sessionId: string,
+    content: string,
+    role: "user" | "assistant" | "system" = "user",
+    stage?: SessionStage,
+    topicId?: number
+  ) =>
+    request<ConversationMessage>("/api/sessions/message", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        content,
+        role,
+        stage,
+        topic_id: topicId,
+      }),
+    }),
+
+  getRecommendedTopic: (userId: number, subjectId: number) =>
+    request<RecommendationResponse>(`/api/sessions/recommend/${userId}/${subjectId}`),
+
+  getSubjectMastery: (userId: number, subjectId: number) =>
+    request<SubjectMasteryResponse>(`/api/sessions/mastery/${userId}/${subjectId}`),
+
+  getUserSessions: (userId: number) =>
+    request<LearningSession[]>(`/api/sessions/user/${userId}`),
+
+  getSessionDetails: (sessionId: string) =>
+    request<LearningSession>(`/api/sessions/${sessionId}`),
 };
+

@@ -68,6 +68,7 @@ export default function Home() {
     initData();
   }, []);
 
+
   useEffect(() => {
     if (currentUser.role !== "admin" && activeTab === "vectors") {
       setActiveTab("upload");
@@ -208,6 +209,7 @@ export default function Home() {
             {activeTab === "skilltree" && (
               <SkillTreeDag
                 subject={activeSubject}
+                subjects={subjects}
                 onSelectTopicForTutor={handleSelectTopicForTutor}
               />
             )}
@@ -222,7 +224,7 @@ export default function Home() {
               />
             )}
 
-            {/* TAB 4: VECTOR KNOWLEDGE BASE (RUD) - ADMIN ONLY */}
+            {/* TAB 5: VECTOR KNOWLEDGE BASE (RUD) - ADMIN ONLY */}
             {activeTab === "vectors" && (
               <VectorStoreManager
                 currentUser={currentUser}
