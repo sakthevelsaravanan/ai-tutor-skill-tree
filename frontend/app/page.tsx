@@ -59,6 +59,19 @@ export default function Home() {
           const defaultUser = usersRes.find((u) => u.role === "instructor") || usersRes[0];
           setCurrentUser(defaultUser);
         }
+
+        if (typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          const tab = params.get("tab");
+          if (tab === "skilltree" || tab === "tutor" || tab === "vectors" || tab === "upload") {
+            setActiveTab(tab);
+          }
+          const role = params.get("role");
+          if (role === "admin") {
+            const adminUser = usersRes.find((u) => u.role === "admin");
+            if (adminUser) setCurrentUser(adminUser);
+          }
+        }
       } catch (err) {
         console.error("Initialization error:", err);
       } finally {
