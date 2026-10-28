@@ -404,6 +404,16 @@ def _generate_socratic_response(
     clean_topic = _clean_concept_name(topic_name)
     q_lower = query.lower()
 
+    grounding_excerpt = _clean_chunk_text(chunks[0]["document"]) if chunks else None
+    if grounding_excerpt and len(grounding_excerpt) > 300:
+        grounding_excerpt = grounding_excerpt[:300] + "..."
+
+    # Check if this is a numerical problem first (deterministic mathematical calculation)
+    prob = parse_hill_cipher_problem(query)
+    if prob:
+        direct_answer, socratic_q = solve_hill_cipher(prob)
+        return direct_answer, socratic_q, grounding_excerpt, top_sim, top_src
+
     # Step 2.4: Insufficient retrieval handling
     if not chunks or (top_sim is not None and top_sim < MIN_RELEVANCE_THRESHOLD):
         insufficient_msg = (
@@ -412,17 +422,6 @@ def _generate_socratic_response(
         )
         socratic_q = f"Which foundational concept in {clean_topic} would you like to explore next?"
         return insufficient_msg, socratic_q, None, top_sim, top_src
-
-    grounding_excerpt = _clean_chunk_text(chunks[0]["document"]) if chunks else None
-    if grounding_excerpt and len(grounding_excerpt) > 300:
-        grounding_excerpt = grounding_excerpt[:300] + "..."
-
-    # Check if this is a numerical Hill cipher problem first (deterministic mathematical calculation)
-    if ("hill" in q_lower or "hill" in clean_topic.lower() or "cipher" in q_lower):
-        prob = parse_hill_cipher_problem(query)
-        if prob:
-            direct_answer, socratic_q = solve_hill_cipher(prob)
-            return direct_answer, socratic_q, grounding_excerpt, top_sim, top_src
 
     # Step 2.3: Check if an external LLM key is configured (Groq / Gemini / OpenAI)
     groq_api_key = os.getenv("GROQ_API_KEY")
