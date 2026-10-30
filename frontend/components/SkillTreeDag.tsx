@@ -7,6 +7,7 @@ import { GitFork, BookOpen, Layers, Play, MessageSquare, ArrowRight, CheckCircle
 
 interface SkillTreeDagProps {
   subject: Subject;
+  subjects?: Subject[];
   onSelectTopicForTutor: (topicId: number) => void;
 }
 

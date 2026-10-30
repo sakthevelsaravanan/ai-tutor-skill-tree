@@ -6,18 +6,11 @@ import { api } from "@/lib/api";
 import { CustomDropdown } from "@/components/CustomDropdown";
 import {
   Send,
-  Sparkles,
-  BookOpen,
-  ChevronDown,
-  ChevronUp,
   Bot,
-  User,
   RefreshCw,
-  GitFork,
-  CheckCircle2,
-  HelpCircle,
   ArrowRight,
 } from "lucide-react";
+import katex from "katex";
 
 interface TutorChatProps {
   subjects: Subject[];
@@ -52,7 +45,6 @@ export function TutorChat({
   const [query, setQuery] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
   const [usePrereqFilter, setUsePrereqFilter] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -153,20 +145,28 @@ export function TutorChat({
     }
   };
 
-  const toggleSources = (msgId: string) => {
-    setExpandedSources((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
+  // Helper to get natural concept label for suggestions
+  const getCleanTopicTitle = (topicName?: string) => {
+    if (!topicName) return "this concept";
+    return topicName
+      .replace(/^\d+[\s_-]*/, "")
+      .replace(/:\s*(Fundamental Concepts|Structural Models|Dynamic Processes|Advanced Synthesis).*$/i, "")
+      .replace(/[_\-]+/g, " ")
+      .trim();
   };
+
+  const cleanTopicTitle = getCleanTopicTitle(currentTopic?.topic_name);
 
   // Topic specific suggestions
   const suggestions = [
-    `Explain the fundamental mechanisms and invariants of ${currentTopic ? currentTopic.topic_name : "this topic"}.`,
-    `What are the prerequisite concepts required to understand ${currentTopic ? currentTopic.topic_name : "this"}?`,
-    `How does this concept handle corner cases and scalability?`,
+    `Explain the fundamental mechanisms and invariants of ${cleanTopicTitle}.`,
+    `What are the prerequisite concepts required to understand ${cleanTopicTitle}?`,
+    `How does ${cleanTopicTitle} handle core operations and edge cases?`,
   ];
 
   return (
     <div className="w-full max-w-5xl mx-auto flex flex-col h-[calc(100vh-8rem)] min-h-[640px] rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
-      {/* Pristine Header Bar */}
+      {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/60 px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
@@ -199,7 +199,7 @@ export function TutorChat({
               type="checkbox"
               checked={usePrereqFilter}
               onChange={(e) => setUsePrereqFilter(e.target.checked)}
-              className="rounded bg-zinc-900 border-zinc-700 text-blue-500 focus:ring-0"
+              className="rounded bg-zinc-900 border-zinc-700 text-orange-500 focus:ring-0"
             />
             <span className="hidden sm:inline">Relational Prerequisite Filter</span>
             <span className="sm:hidden">Prereq Filter</span>
@@ -217,7 +217,7 @@ export function TutorChat({
       </div>
 
       {/* Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 text-zinc-400">
             <div className="h-10 w-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-200 border border-zinc-800">
@@ -263,149 +263,21 @@ export function TutorChat({
                 )}
 
                 <div
-                  className={`max-w-[88%] sm:max-w-[80%] rounded-xl px-4 py-3 text-xs leading-relaxed space-y-3 ${
+                  className={`max-w-[88%] sm:max-w-[80%] rounded-xl px-4 py-3 text-xs leading-relaxed space-y-2.5 ${
                     isUser
-                      ? "bg-zinc-100 text-zinc-950 font-medium"
-                      : "bg-zinc-900/60 border border-zinc-800 text-zinc-200"
+                      ? "bg-orange-600 text-white font-normal shadow-md shadow-orange-600/25 border border-orange-500/40"
+                      : "bg-zinc-900/80 border border-zinc-800 text-zinc-200 shadow-sm"
                   }`}
                 >
-                  {/* Topic badge for assistant */}
-                  {!isUser && msg.topicName && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-zinc-800 text-[10px] text-zinc-400 font-mono">
-                      <span>Concept: <strong className="text-zinc-200">{msg.topicName}</strong></span>
-                      {msg.relationalFilterApplied && (
-                        <span className="text-orange-400 bg-orange-950/40 border border-orange-800/60 px-1.5 py-0.2 rounded font-mono text-[10px]">
-                          Prerequisite Filter Active
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Formatted Direct Educational Answer */}
+                  {/* Clean Direct Educational Answer & Grounded Follow-up */}
                   <div className="space-y-2">
-                    {renderFormattedContent(msg.content)}
+                    {renderFormattedContent(msg.content, isUser)}
                   </div>
-
-                  {/* Optional Collapsible Dropdown: Grounding Stats, Excerpts & Reflection Challenge */}
-                  {!isUser && (msg.topSimilarity !== undefined || msg.reflectionQuestion || (msg.retrievedChunks && msg.retrievedChunks.length > 0)) && (
-                    <div className="pt-2 border-t border-zinc-800/80">
-                      <button
-                        type="button"
-                        onClick={() => toggleSources(msg.id)}
-                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-950/70 border border-zinc-800/80 hover:border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition group"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="h-3.5 w-3.5 text-orange-400" />
-                          <span className="font-medium text-zinc-300">Grounding Stats & Reflection</span>
-                          {msg.topSimilarity !== null && msg.topSimilarity !== undefined && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-orange-950/50 text-orange-400 border border-orange-800/50">
-                              {roundPercent(msg.topSimilarity)}% match
-                            </span>
-                          )}
-                        </div>
-                        {expandedSources[msg.id] ? (
-                          <ChevronUp className="h-3.5 w-3.5 text-zinc-400 group-hover:text-zinc-200" />
-                        ) : (
-                          <ChevronDown className="h-3.5 w-3.5 text-zinc-400 group-hover:text-zinc-200" />
-                        )}
-                      </button>
-
-                      {expandedSources[msg.id] && (
-                        <div className="mt-2 space-y-3 p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs">
-                          {/* 1. Retrieval & RAG Metrics */}
-                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-zinc-800/80 font-mono text-[11px]">
-                            <div className="flex items-center gap-1.5 text-zinc-400">
-                              <span>Source Document:</span>
-                              <strong className="text-zinc-200">{msg.topSource || (msg.retrievedChunks && msg.retrievedChunks[0]?.metadata?.file_name) || "Course Materials"}</strong>
-                            </div>
-                            {msg.topSimilarity !== null && msg.topSimilarity !== undefined && (
-                              <div className="text-orange-400 font-semibold">
-                                Cosine Similarity: {roundPercent(msg.topSimilarity)}%
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 2. Matched Slide / Textbook Excerpt */}
-                          {(msg.groundingExcerpt || (msg.retrievedChunks && msg.retrievedChunks[0]?.document)) && (
-                            <div className="space-y-1">
-                              <span className="text-[10px] font-mono uppercase text-zinc-500 block">
-                                Matched Course Excerpt
-                              </span>
-                              <div className="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 italic font-mono leading-relaxed">
-                                "{msg.groundingExcerpt || msg.retrievedChunks?.[0]?.document}"
-                              </div>
-                            </div>
-                          )}
-
-                          {/* 3. Socratic Reflection Challenge */}
-                          {msg.reflectionQuestion && (
-                            <div className="p-3 rounded-lg bg-orange-950/20 border border-orange-500/30 space-y-1.5">
-                              <div className="flex items-center gap-1.5 text-orange-400 font-semibold text-[11px]">
-                                <HelpCircle className="h-3.5 w-3.5" />
-                                <span>Socratic Reflection Challenge</span>
-                              </div>
-                              <p className="text-zinc-200 text-xs italic">
-                                "{msg.reflectionQuestion}"
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => setQuery(`In response to the reflection challenge: ${msg.reflectionQuestion}`)}
-                                className="text-[10px] font-mono text-orange-400 hover:text-orange-300 underline pt-1 block"
-                              >
-                                Click to answer this reflection question
-                              </button>
-                            </div>
-                          )}
-
-                          {/* 4. Prerequisite Context Trace */}
-                          {msg.prerequisites && msg.prerequisites.length > 0 && (
-                            <div className="pt-2 border-t border-zinc-800/60 flex items-center gap-2 text-[10px] font-mono text-zinc-400">
-                              <span>Prerequisites:</span>
-                              <div className="flex flex-wrap gap-1">
-                                {msg.prerequisites.slice(0, 3).map((p, idx) => (
-                                  <span key={idx} className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300">
-                                    {p.prereq_topic_name}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* 5. All Retrieved Passages (if multiple) */}
-                          {msg.retrievedChunks && msg.retrievedChunks.length > 1 && (
-                            <div className="pt-2 border-t border-zinc-800/60 space-y-1.5">
-                              <span className="text-[10px] font-mono uppercase text-zinc-500 block">
-                                All Retrieved Vector Chunks ({msg.retrievedChunks.length})
-                              </span>
-                              <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                                {msg.retrievedChunks.map((chunk, cIdx) => (
-                                  <div
-                                    key={chunk.id || cIdx}
-                                    className="p-2 rounded bg-zinc-900/60 border border-zinc-800/60 text-[10.5px] space-y-1 text-zinc-300 font-mono"
-                                  >
-                                    <div className="flex items-center justify-between text-[9.5px] text-zinc-500">
-                                      <span>{chunk.metadata?.file_name || "Textbook"}</span>
-                                      <span className="text-orange-400 font-semibold">
-                                        {roundPercent(chunk.similarity)}%
-                                      </span>
-                                    </div>
-                                    <p className="text-zinc-400 italic line-clamp-2">
-                                      "{chunk.document}"
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                   {/* Timestamp */}
                   <div
                     className={`text-[9px] font-mono text-right ${
-                      isUser ? "text-zinc-500" : "text-zinc-500"
+                      isUser ? "text-orange-200/80" : "text-zinc-500"
                     }`}
                   >
                     {msg.timestamp}
@@ -431,7 +303,7 @@ export function TutorChat({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Pristine Input Bar */}
+      {/* Input Composer */}
       <div className="p-3 border-t border-zinc-800 bg-zinc-900/50">
         <form
           onSubmit={(e) => {
@@ -444,7 +316,7 @@ export function TutorChat({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Ask a question about ${currentTopic ? currentTopic.topic_name : "the curriculum"}...`}
+            placeholder={`Ask a question about ${cleanTopicTitle || "the curriculum"}...`}
             disabled={loading}
             className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
           />
@@ -461,66 +333,303 @@ export function TutorChat({
   );
 }
 
-// Clean helper to parse and render Markdown formatted text
-function renderFormattedContent(content: string) {
-  // Strip any Socratic Reflection Question from main answer body (handled in dropdown)
-  const reflectionMarker = "**Socratic Reflection Question**:";
-  let mainBody = content;
+// Helper component to render KaTeX math expressions
+function MathSnippet({
+  tex,
+  displayMode = false,
+  isUser = false,
+}: {
+  tex: string;
+  displayMode?: boolean;
+  isUser?: boolean;
+}) {
+  if (!tex || !tex.trim()) return null;
 
-  if (content.includes(reflectionMarker)) {
-    const parts = content.split(reflectionMarker);
-    mainBody = parts[0].trim();
+  try {
+    const html = katex.renderToString(tex.trim(), {
+      displayMode,
+      throwOnError: false,
+      strict: false,
+    });
+    return (
+      <span
+        dangerouslySetInnerHTML={{ __html: html }}
+        className={
+          displayMode
+            ? `block my-2.5 text-center overflow-x-auto py-1 ${
+                isUser ? "text-white" : "text-orange-200"
+              }`
+            : `inline-block align-baseline mx-0.5 ${
+                isUser ? "text-white" : "text-orange-100"
+              }`
+        }
+      />
+    );
+  } catch {
+    return <code className="font-mono text-xs">{tex}</code>;
+  }
+}
+
+// Tokenize and render inline text, math ($...$, \(...\), $$...$$, \[...\]), bold (**...**), and code (`...`)
+function renderInlineContent(rawText: string, isUser: boolean = false): React.ReactNode {
+  // Normalize escaped asterisks if present e.g. \*\* -> **
+  const text = rawText.replace(/\\\*/g, "*");
+
+  const regex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[^\$\n]+?\$|\\\([^\n]+?\\\)|(?:\*\*|__)[^\*\n]+?(?:\*\*|__)|`[^`\n]+?`)/g;
+
+  const elements: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      elements.push(text.slice(lastIndex, match.index));
+    }
+
+    const m = match[0];
+    const key = `inline_${match.index}`;
+
+    if (m.startsWith("$$") && m.endsWith("$$")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(2, -2)} displayMode={true} isUser={isUser} />
+      );
+    } else if (m.startsWith("\\[") && m.endsWith("\\]")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(2, -2)} displayMode={true} isUser={isUser} />
+      );
+    } else if (m.startsWith("$") && m.endsWith("$")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(1, -1)} displayMode={false} isUser={isUser} />
+      );
+    } else if (m.startsWith("\\(") && m.endsWith("\\)")) {
+      elements.push(
+        <MathSnippet key={key} tex={m.slice(2, -2)} displayMode={false} isUser={isUser} />
+      );
+    } else if (
+      (m.startsWith("**") && m.endsWith("**")) ||
+      (m.startsWith("__") && m.endsWith("__"))
+    ) {
+      elements.push(
+        <strong
+          key={key}
+          className={`font-semibold ${isUser ? "text-white font-bold" : "text-zinc-100"}`}
+        >
+          {m.slice(2, -2)}
+        </strong>
+      );
+    } else if (m.startsWith("`") && m.endsWith("`")) {
+      elements.push(
+        <code
+          key={key}
+          className={`font-mono text-[10.5px] px-1 py-0.5 rounded ${
+            isUser ? "bg-orange-700/60 text-white" : "bg-zinc-800 text-zinc-300"
+          }`}
+        >
+          {m.slice(1, -1)}
+        </code>
+      );
+    } else {
+      elements.push(m);
+    }
+
+    lastIndex = regex.lastIndex;
   }
 
-  // Split paragraphs
-  const paragraphs = mainBody.split("\n\n");
+  if (lastIndex < text.length) {
+    elements.push(text.slice(lastIndex));
+  }
+
+  return elements;
+}
+
+interface ParsedBlock {
+  type: "h2" | "h3" | "h4" | "p" | "display_math" | "reflection" | "ol" | "ul";
+  content: string;
+}
+
+function parseContentBlocks(markdown: string): ParsedBlock[] {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const rawParagraphs = normalized.split(/\n\n+/);
+  const blocks: ParsedBlock[] = [];
+
+  for (const rawP of rawParagraphs) {
+    const trimmed = rawP.trim();
+    if (!trimmed) continue;
+
+    // Check if entire paragraph is standalone display math: $$...$$ or \[...\]
+    if (
+      (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length > 4) ||
+      (trimmed.startsWith("\\[") && trimmed.endsWith("\\]") && trimmed.length > 4)
+    ) {
+      const math = trimmed.startsWith("$$") ? trimmed.slice(2, -2) : trimmed.slice(2, -2);
+      blocks.push({ type: "display_math", content: math.trim() });
+      continue;
+    }
+
+    // Check if reflection block
+    if (
+      trimmed.startsWith("> ") ||
+      trimmed.startsWith("Think about this:") ||
+      trimmed.startsWith("**Socratic Reflection")
+    ) {
+      blocks.push({ type: "reflection", content: trimmed.replace(/^>\s*/, "") });
+      continue;
+    }
+
+    // Line by line breakdown to handle headings and lists embedded in single newlines
+    const lines = trimmed.split("\n");
+    let currentLines: string[] = [];
+    let currentType: "p" | "ol" | "ul" | null = null;
+
+    const flushCurrent = () => {
+      if (currentLines.length > 0) {
+        blocks.push({ type: currentType || "p", content: currentLines.join("\n") });
+        currentLines = [];
+        currentType = null;
+      }
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineTrim = line.trim();
+
+      if (lineTrim.startsWith("### ")) {
+        flushCurrent();
+        blocks.push({ type: "h4", content: lineTrim.replace(/^###\s+/, "") });
+      } else if (lineTrim.startsWith("## ")) {
+        flushCurrent();
+        blocks.push({ type: "h3", content: lineTrim.replace(/^##\s+/, "") });
+      } else if (lineTrim.startsWith("# ")) {
+        flushCurrent();
+        blocks.push({ type: "h2", content: lineTrim.replace(/^#\s+/, "") });
+      } else if (
+        (lineTrim.startsWith("$$") && lineTrim.endsWith("$$") && lineTrim.length > 4) ||
+        (lineTrim.startsWith("\\[") && lineTrim.endsWith("\\]") && lineTrim.length > 4)
+      ) {
+        flushCurrent();
+        const math = lineTrim.startsWith("$$") ? lineTrim.slice(2, -2) : lineTrim.slice(2, -2);
+        blocks.push({ type: "display_math", content: math.trim() });
+      } else if (/^\d+\.\s/.test(lineTrim)) {
+        if (currentType !== "ol") {
+          flushCurrent();
+          currentType = "ol";
+        }
+        currentLines.push(lineTrim);
+      } else if (/^[-*]\s/.test(lineTrim)) {
+        if (currentType !== "ul") {
+          flushCurrent();
+          currentType = "ul";
+        }
+        currentLines.push(lineTrim);
+      } else {
+        if (currentType === "ol" || currentType === "ul") {
+          flushCurrent();
+        }
+        currentLines.push(line);
+      }
+    }
+
+    flushCurrent();
+  }
+
+  return blocks;
+}
+
+// Clean helper to parse and render Markdown formatted text with KaTeX
+function renderFormattedContent(content: string, isUser: boolean = false) {
+  const blocks = parseContentBlocks(content);
 
   return (
-    <div className="space-y-3">
-      {paragraphs.map((p, pIdx) => {
-        // Heading
-        if (p.startsWith("### ")) {
+    <div className="space-y-2.5">
+      {blocks.map((b, idx) => {
+        if (b.type === "h2") {
           return (
-            <h4 key={pIdx} className="text-xs font-semibold text-zinc-100 pt-1.5 border-b border-zinc-800/60 pb-1">
-              {p.replace("### ", "")}
+            <h2
+              key={idx}
+              className={`text-sm font-bold pt-2 pb-1 border-b ${
+                isUser ? "text-white border-orange-400/40" : "text-zinc-100 border-zinc-800/80"
+              }`}
+            >
+              {renderInlineContent(b.content, isUser)}
+            </h2>
+          );
+        }
+
+        if (b.type === "h3") {
+          return (
+            <h3
+              key={idx}
+              className={`text-xs font-bold pt-2 pb-1 border-b ${
+                isUser ? "text-white border-orange-400/40" : "text-zinc-100 border-zinc-800/80"
+              }`}
+            >
+              {renderInlineContent(b.content, isUser)}
+            </h3>
+          );
+        }
+
+        if (b.type === "h4") {
+          return (
+            <h4
+              key={idx}
+              className={`text-xs font-semibold pt-1.5 pb-0.5 ${
+                isUser ? "text-white" : "text-orange-400"
+              }`}
+            >
+              {renderInlineContent(b.content, isUser)}
             </h4>
           );
         }
 
-        // Blockquote
-        if (p.startsWith("> ")) {
+        if (b.type === "display_math") {
+          return <MathSnippet key={idx} tex={b.content} displayMode={true} isUser={isUser} />;
+        }
+
+        if (b.type === "reflection") {
           return (
             <div
-              key={pIdx}
-              className="p-2.5 rounded-lg bg-zinc-950/80 border-l-2 border-orange-500 text-[11px] text-zinc-300 leading-relaxed font-mono"
+              key={idx}
+              className={`p-3 rounded-lg border-l-2 text-xs leading-relaxed my-2 ${
+                isUser
+                  ? "bg-orange-700/40 border-white text-white"
+                  : "bg-orange-950/20 border-orange-500/80 text-zinc-200 italic"
+              }`}
             >
-              {formatInlineText(p.replace("> ", ""))}
+              {renderInlineContent(b.content, isUser)}
             </div>
           );
         }
 
-        // Numbered list items
-        if (/^\d+\.\s/.test(p.trim())) {
-          const items = p.split("\n");
+        if (b.type === "ol") {
+          const items = b.content.split("\n");
           return (
-            <ol key={pIdx} className="space-y-1.5 pl-3 list-decimal list-inside text-xs leading-relaxed text-zinc-200">
+            <ol
+              key={idx}
+              className={`space-y-1.5 pl-4 list-decimal list-outside text-xs leading-relaxed ${
+                isUser ? "text-white" : "text-zinc-200"
+              }`}
+            >
               {items.map((it, iIdx) => (
                 <li key={iIdx}>
-                  {formatInlineText(it.replace(/^\d+\.\s/, ""))}
+                  {renderInlineContent(it.replace(/^\d+\.\s*/, ""), isUser)}
                 </li>
               ))}
             </ol>
           );
         }
 
-        // Bullet list items
-        if (/^-\s/.test(p.trim())) {
-          const items = p.split("\n");
+        if (b.type === "ul") {
+          const items = b.content.split("\n");
           return (
-            <ul key={pIdx} className="space-y-1.5 pl-3 list-disc list-inside text-xs leading-relaxed text-zinc-200">
+            <ul
+              key={idx}
+              className={`space-y-1.5 pl-4 list-disc list-outside text-xs leading-relaxed ${
+                isUser ? "text-white" : "text-zinc-200"
+              }`}
+            >
               {items.map((it, iIdx) => (
                 <li key={iIdx}>
-                  {formatInlineText(it.replace(/^-\s/, ""))}
+                  {renderInlineContent(it.replace(/^[-*]\s*/, ""), isUser)}
                 </li>
               ))}
             </ul>
@@ -528,39 +637,16 @@ function renderFormattedContent(content: string) {
         }
 
         return (
-          <p key={pIdx} className="leading-relaxed text-zinc-200 text-xs">
-            {formatInlineText(p)}
+          <p
+            key={idx}
+            className={`leading-relaxed text-xs ${
+              isUser ? "text-white font-normal" : "text-zinc-200"
+            }`}
+          >
+            {renderInlineContent(b.content, isUser)}
           </p>
         );
       })}
     </div>
   );
-}
-
-// Parse inline bold, code, and emphasis
-function formatInlineText(text: string): React.ReactNode {
-  // Regex to match **bold** and `code`
-  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
-  return parts.map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return (
-        <strong key={index} className="font-semibold text-zinc-100">
-          {part.slice(2, -2)}
-        </strong>
-      );
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return (
-        <code key={index} className="font-mono text-[10.5px] px-1 py-0.5 rounded bg-zinc-800 text-zinc-300">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    return part;
-  });
-}
-
-function roundPercent(val?: number): string {
-  if (val === undefined || val === null) return "N/A";
-  return (val * 100).toFixed(1);
 }
