@@ -48,9 +48,7 @@ export default function Home() {
         setSubjects(subjectsRes);
 
         if (subjectsRes.length > 0) {
-          const mech = subjectsRes.find((s) => s.subject_key === "mechanical");
-          const bigData = subjectsRes.find((s) => s.subject_key === "big_data");
-          const defaultSub = mech || bigData || subjectsRes[subjectsRes.length - 1];
+          const defaultSub = subjectsRes[0];
           setSelectedSubjectId(defaultSub.subject_id);
           setHasDocument(true);
         }

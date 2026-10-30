@@ -150,7 +150,7 @@ export function TutorChat({
     if (!topicName) return "this concept";
     return topicName
       .replace(/^\d+[\s_-]*/, "")
-      .replace(/:\s*(Fundamental Concepts|Structural Models|Dynamic Processes|Advanced Synthesis).*$/i, "")
+      .replace(/^Part\s*\d+:\s*/i, "")
       .replace(/[_\-]+/g, " ")
       .trim();
   };

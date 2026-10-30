@@ -104,8 +104,7 @@ export const VectorStoreManager: React.FC<VectorStoreManagerProps> = ({
           if (prev && data.some((c) => c.name.replace(/^chroma_/, "") === prev)) {
             return prev;
           }
-          const bigData = data.find((c) => c.name.includes("big_data"));
-          return (bigData || data[0]).name.replace(/^chroma_/, "");
+          return data[0].name.replace(/^chroma_/, "");
         });
       } else {
         setSelectedSubject("");
