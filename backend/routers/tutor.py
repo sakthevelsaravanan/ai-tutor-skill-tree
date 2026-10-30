@@ -74,12 +74,7 @@ def _clean_concept_name(name: Optional[str]) -> str:
     if not name:
         return "STEM Curriculum"
     clean = re.sub(r'^\d+[\s_-]*', '', name)
-    clean = re.sub(
-        r':\s*(Fundamental Concepts|Structural Models|Dynamic Processes|Advanced Synthesis).*$',
-        '',
-        clean,
-        flags=re.IGNORECASE
-    )
+    clean = re.sub(r':.*$', '', clean)
     clean = re.sub(r'[_\-]+', ' ', clean).strip()
     return clean.title() if clean else name
 
@@ -348,34 +343,25 @@ def _extract_slide_topics_and_definitions(
 
         # Skip administrative acknowledgment / contributor slides
         doc_lower = doc.lower()
+        # General acknowledgment / administrative slide filtering
         if any(w in doc_lower for w in [
-            "with grateful thanks", "contribution of slides", "slides collated by",
-            "teaching assistant", "vii sem", "viii sem", "v sem", "vi sem"
-        ]) and any(w in doc_lower for w in ["@gmail.com", "@pes.edu", "prof.", "dr."]):
+            "grateful thanks", "acknowledgment", "contribution of slides",
+            "teaching assistant", "all rights reserved", "emergency exit"
+        ]) and any(w in doc_lower for w in ["@gmail.com", "@", "prof.", "dr."]):
             continue
 
         raw_lines = [l.strip() for l in doc.splitlines() if l.strip()]
         if not raw_lines:
             continue
 
-        # Filter noise from slide lines
+        ADMIN_NOISE_RE = r"(?i)\b(department of|faculty of|school of|university|institute|campus|all rights reserved|copyright|page \d+|thank you|any questions|excerpted from)\b"
         cleaned_lines = []
-        noise_words = [
-            "DATA ANALYTICS", "PES UNIVERSITY", "DEPARTMENT OF", "UNIT ",
-            "LECTURE ", "EXCERPTED FROM", "WILEY", "PAGE ", "EMERGENCY EXIT",
-            "THANK YOU", "ANY QUESTIONS", "RING ROAD CAMPUS", "ISFCR"
-        ]
-        if subject_name:
-            noise_words.append(subject_name.upper())
-
         for line in raw_lines:
-            line_up = line.upper()
-            if any(nw in line_up for nw in noise_words):
-                # Check if it has real content after noise
-                sub_clean = line
-                for nw in noise_words:
-                    sub_clean = re.sub(rf"(?i)\b{re.escape(nw)}\b", "", sub_clean).strip()
-                if len(sub_clean) > 10 and not any(nw in sub_clean.upper() for nw in noise_words):
+            if subject_name and subject_name.lower() in line.lower() and len(line) <= len(subject_name) + 12:
+                continue
+            if re.search(ADMIN_NOISE_RE, line):
+                sub_clean = re.sub(ADMIN_NOISE_RE, "", line).strip()
+                if len(sub_clean) > 10:
                     cleaned_lines.append(sub_clean)
                 continue
             cleaned = line.lstrip("-* \t\u261e\u25cf\u2022").strip()

@@ -24,40 +24,84 @@ class DocumentIndexer:
             start += self.chunk_size - self.chunk_overlap
         return chunks
 
-    def _extract_quarter_topic_title(self, quarter_pages: List[Tuple[int, str]], quarter_num: int, subject_name: str) -> str:
-        TECH_BOOST = r"(?i)\b(analysis|analytics|algorithm|architecture|arima|autoregress|component|chain|circuit|data|distribution|dynamics|equation|estimation|filter|forecast|markov|matrix|model|network|operation|optimization|order|probability|process|protocol|random|signal|state|stationar|stochastic|structure|system|technique|time|transition|vector)\b"
-        NOISE = r"(?i)\b(data analytics|ue\w+|dept\w*|department|prof\w*|dr\.|gowri|srinivasa|pes university|s\.no|page|table|figure|agenda|recap|outline|session|in this session|example|test your|solution|continued|purchased|customer|store|brand|ooty|coonoor|nilgiri|chennai|bangalore|retail|tea|coffee|supermarket|sales|review|lecture \d+|unit \d+|module \d+|chapter \d+)\b"
+    def _extract_quarter_topics_pure(
+        self,
+        quarters: List[List[Tuple[int, str]]],
+        subject_name: str
+    ) -> List[str]:
+        """
+        Pure algorithmic topic extraction across the 4 quarters of a document.
+        Detects repeating template lines (headers/footers/author lines) statistically
+        without hardcoding any course names, teacher names, or domain concepts.
+        """
+        ADMIN_NOISE = r"(?i)\b(department|faculty|school|university|institute|college|all rights reserved|copyright|agenda|objectives|outline|table of contents|summary|recap|references|textbooks|page \d+|s\.no|slide \d+|session \d+|lecture \d+|unit \d+|module \d+|chapter \d+|thank you|questions\?|example|solution|continued|prof|dr\.|author|instructor|lecturer)\b"
+        DANGLING_TAILS = {'for', 'to', 'in', 'of', 'by', 'with', 'and', 'or', 'the', 'a', 'an', 'at', 'from', 'as', 'on'}
 
-        candidates = {}
+        # Statistical detection of repeating headers/footers across quarters
+        line_quarter_presence = {}
+        for q_pages in quarters:
+            seen_in_q = set()
+            for _, text in q_pages:
+                for l in [line.strip() for line in text.split("\n")[:4] if line.strip()]:
+                    cleaned = re.sub(r"^[0-9\.\-:\s]+", "", l).strip()
+                    cleaned = re.sub(r"[^\x00-\x7F]+", "", cleaned).strip()
+                    cleaned = re.sub(r"(?i)^(what is |intro to |introduction to |overview of |a )", "", cleaned).strip()
+                    cleaned = re.sub(r"[?!:;\*\"']+$", "", cleaned).strip()
+                    norm = cleaned.lower()
+                    if 2 <= len(cleaned.split()) <= 6 and 6 <= len(cleaned) <= 50:
+                        seen_in_q.add(norm)
+            for norm in seen_in_q:
+                line_quarter_presence[norm] = line_quarter_presence.get(norm, 0) + 1
 
-        for _, text in quarter_pages:
-            lines = [l.strip() for l in text.split("\n") if l.strip()]
-            for l in lines[:4]:
-                cleaned = re.sub(r"^[0-9\.\-:\s]+", "", l).strip()
-                cleaned = re.sub(r"[^\x00-\x7F]+", "", cleaned).strip()
-                cleaned = re.sub(r"(?i)^(what is |intro to |introduction to |a )", "", cleaned).strip()
-                cleaned = re.sub(r"[?!:;\*\"']+$", "", cleaned).strip()
-                words = cleaned.split()
-                if 2 <= len(words) <= 6 and 6 <= len(cleaned) <= 50:
-                    if not re.search(NOISE, cleaned) and not re.search(r"[@\\/_\{\}\$\=]", cleaned):
-                        tech_matches = len(re.findall(TECH_BOOST, cleaned))
-                        if tech_matches > 0:
-                            score = 10 * tech_matches + (5 if any(w[0].isupper() for w in words) else 0)
-                            cand_title = cleaned.title()
-                            candidates[cand_title] = candidates.get(cand_title, 0) + score
+        # Any line appearing across 2 or more quarters is a global template header/footer
+        template_lines = {norm for norm, count in line_quarter_presence.items() if count >= 2}
 
-        sorted_cands = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
-        if sorted_cands:
-            return sorted_cands[0][0]
+        # Subject tokens to prevent repeating the global subject title
+        sub_tokens = set(re.findall(r"[A-Za-z]{3,}", subject_name.lower()))
 
-        clean_name = subject_name.replace("_", " ").title()
-        fallbacks = [
-            f"Foundations of {clean_name}",
-            f"Analytical Methods in {clean_name}",
-            f"Modeling & Dynamics in {clean_name}",
-            f"Advanced Systems & Applications"
-        ]
-        return fallbacks[quarter_num - 1]
+        extracted_titles = []
+        for q_idx, q_pages in enumerate(quarters):
+            candidates = {}
+            for _, text in q_pages:
+                lines = [l.strip() for l in text.split("\n") if l.strip()]
+                for l in lines[:4]:
+                    if "@" in l or "http" in l or l.endswith(".") or l.endswith(","):
+                        continue
+                    cleaned = re.sub(r"^[0-9\.\-:\s]+", "", l).strip()
+                    cleaned = re.sub(r"[^\x00-\x7F]+", "", cleaned).strip()
+                    cleaned = re.sub(r"(?i)^(what is |intro to |introduction to |overview of |a )", "", cleaned).strip()
+                    cleaned = re.sub(r"[?!:;\*\"']+$", "", cleaned).strip()
+
+                    words = cleaned.split()
+                    if 2 <= len(words) <= 6 and 6 <= len(cleaned) <= 50:
+                        norm = cleaned.lower()
+                        if norm in template_lines:
+                            continue
+                        if words[-1].lower() in DANGLING_TAILS:
+                            continue
+                        cand_tokens = set(re.findall(r"[A-Za-z]{3,}", norm))
+                        if cand_tokens and cand_tokens.issubset(sub_tokens):
+                            continue
+                        if not re.search(ADMIN_NOISE, cleaned) and not re.search(r"[@\\/_\{\}\$\=]", cleaned):
+                            if not re.search(r"\b(we|you|they|assume|consider|suppose|let|is|are|was|were|can|will|should)\b", norm):
+                                cap_words = sum(1 for w in words if w[0].isupper())
+                                if cap_words >= len(words) // 2:
+                                    cand_title = cleaned.title()
+                                    candidates[cand_title] = candidates.get(cand_title, 0) + 1
+
+            sorted_cands = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+            if sorted_cands:
+                extracted_titles.append(sorted_cands[0][0])
+            else:
+                fallbacks = [
+                    "Core Foundations",
+                    "Key Methodologies",
+                    "Applied Modeling",
+                    "Advanced Systems"
+                ]
+                extracted_titles.append(fallbacks[q_idx])
+
+        return extracted_titles
 
     def ensure_subject_topics(
         self,
@@ -97,10 +141,11 @@ class DocumentIndexer:
             pages_content[3 * q_size :],
         ]
 
+        quarter_titles = self._extract_quarter_topics_pure(quarters, subject_name)
+
         base_topics = []
         for q_idx in range(4):
-            q_pages = quarters[q_idx] if quarters[q_idx] else pages_content
-            raw_title = self._extract_quarter_topic_title(q_pages, q_idx + 1, subject_name)
+            raw_title = quarter_titles[q_idx]
             topic_label = f"Part {q_idx + 1}: {raw_title}"
             diff_level = q_idx + 1
             base_topics.append((topic_label, diff_level, "p5js", ""))
