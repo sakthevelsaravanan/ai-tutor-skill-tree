@@ -240,7 +240,7 @@ def verify_chromadb_vector_rud():
     run_test("Vector RUD", "POST /api/vector/chunk (Vector CREATE)", test_create_chunk)
 
     def test_read_chunk():
-        res = http.get(f"/api/vector/chunks/{sub_key}?limit=50")
+        res = http.get(f"/api/vector/chunks/{sub_key}?limit=500")
         assert res.status_code == 200
         chunks = res.json()
         ids = [c["id"] for c in chunks]
@@ -271,7 +271,7 @@ def verify_chromadb_vector_rud():
         })
         assert res.status_code == 200
         assert res.json()["status"] == "success"
-        check_res = http.get(f"/api/vector/chunks/{sub_key}?limit=50")
+        check_res = http.get(f"/api/vector/chunks/{sub_key}?limit=500")
         remaining_ids = [c["id"] for c in check_res.json()]
         assert test_chunk_id not in remaining_ids
     run_test("Vector RUD", "DELETE /api/vector/delete (Vector DELETE & Cleanup)", test_delete_chunk)
