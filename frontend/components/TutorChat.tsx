@@ -443,7 +443,7 @@ function renderInlineContent(rawText: string, isUser: boolean = false): React.Re
 }
 
 interface ParsedBlock {
-  type: "h2" | "h3" | "h4" | "p" | "display_math" | "reflection" | "ol" | "ul";
+  type: "h2" | "h3" | "h4" | "p" | "display_math" | "callout" | "ol" | "ul";
   content: string;
 }
 
@@ -466,13 +466,17 @@ function parseContentBlocks(markdown: string): ParsedBlock[] {
       continue;
     }
 
-    // Check if reflection block
+    // Suppress any legacy reflection text if present
     if (
-      trimmed.startsWith("> ") ||
       trimmed.startsWith("Think about this:") ||
       trimmed.startsWith("**Socratic Reflection")
     ) {
-      blocks.push({ type: "reflection", content: trimmed.replace(/^>\s*/, "") });
+      continue;
+    }
+
+    // Check if callout / formula block
+    if (trimmed.startsWith("> ")) {
+      blocks.push({ type: "callout", content: trimmed.replace(/^>\s*/, "") });
       continue;
     }
 
@@ -493,12 +497,15 @@ function parseContentBlocks(markdown: string): ParsedBlock[] {
       const line = lines[i];
       const lineTrim = line.trim();
 
-      if (lineTrim.startsWith("### ")) {
+      if (lineTrim.startsWith("#### ")) {
         flushCurrent();
-        blocks.push({ type: "h4", content: lineTrim.replace(/^###\s+/, "") });
+        blocks.push({ type: "h4", content: lineTrim.replace(/^####\s+/, "") });
+      } else if (lineTrim.startsWith("### ")) {
+        flushCurrent();
+        blocks.push({ type: "h3", content: lineTrim.replace(/^###\s+/, "") });
       } else if (lineTrim.startsWith("## ")) {
         flushCurrent();
-        blocks.push({ type: "h3", content: lineTrim.replace(/^##\s+/, "") });
+        blocks.push({ type: "h2", content: lineTrim.replace(/^##\s+/, "") });
       } else if (lineTrim.startsWith("# ")) {
         flushCurrent();
         blocks.push({ type: "h2", content: lineTrim.replace(/^#\s+/, "") });
@@ -585,14 +592,14 @@ function renderFormattedContent(content: string, isUser: boolean = false) {
           return <MathSnippet key={idx} tex={b.content} displayMode={true} isUser={isUser} />;
         }
 
-        if (b.type === "reflection") {
+        if (b.type === "callout") {
           return (
             <div
               key={idx}
-              className={`p-3 rounded-lg border-l-2 text-xs leading-relaxed my-2 ${
+              className={`p-2.5 rounded-lg border-l-2 text-xs leading-relaxed my-2 font-mono ${
                 isUser
                   ? "bg-orange-700/40 border-white text-white"
-                  : "bg-orange-950/20 border-orange-500/80 text-zinc-200 italic"
+                  : "bg-zinc-900 border-orange-500/80 text-orange-200"
               }`}
             >
               {renderInlineContent(b.content, isUser)}
