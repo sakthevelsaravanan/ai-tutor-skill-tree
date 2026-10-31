@@ -1,3 +1,19 @@
+"""
+Course Document Ingestion & Skill Tree Generation Engine.
+
+This module is responsible for the end-to-end ingestion pipeline:
+1. Document Parsing: Extracts text streams from uploaded course materials (PDF, TXT, MD).
+2. Pure Statistical Quarter Segmentation: Analyzes document structure across 4 equal quarters
+   to detect recurrent university headers/footers without hardcoded domain lists.
+3. Relational Curriculum Setup: Dynamically inserts 4 sequential concept tiers into MySQL
+   (TOPICS table) and establishes strict linear prerequisite dependencies (TOPIC_PREREQUISITES table)
+   such that Part 1 unlocks Part 2, Part 2 unlocks Part 3, and Part 3 unlocks Part 4.
+4. Vector Chunking & Embedding: Splits clean text content with a sliding window and overlap,
+   tags each chunk with its corresponding topic_id and quarter index, and upserts them
+   into the subject's ChromaDB collection for cosine similarity search.
+5. Textbook Cataloging: Records metadata in the TEXTBOOKS table for relational audits.
+"""
+
 import io
 import re
 from typing import List, Tuple, Optional
@@ -6,11 +22,32 @@ from backend.vector_service import vector_service
 from backend.database import execute_dml, execute_one, execute_query
 
 class DocumentIndexer:
+    """
+    Handles PDF and text extraction, chunking, topic derivation,
+    and vector embedding storage.
+    """
     def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 150):
+        """
+        Initialize the indexer with sliding window chunk parameters.
+
+        Args:
+            chunk_size: Maximum character length for each semantic chunk.
+            chunk_overlap: Number of overlapping characters between adjacent chunks
+                           to maintain semantic context at chunk boundaries.
+        """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
     def _split_text(self, text: str) -> List[str]:
+        """
+        Split a continuous text block into overlapping chunks using a sliding window.
+
+        Args:
+            text: Raw or pre-cleaned text string.
+
+        Returns:
+            List of text chunks with size bounded by chunk_size and overlap by chunk_overlap.
+        """
         chunks = []
         start = 0
         text_len = len(text)
@@ -30,9 +67,26 @@ class DocumentIndexer:
         subject_name: str
     ) -> List[str]:
         """
-        Pure algorithmic topic extraction across the 4 quarters of a document.
-        Detects repeating template lines (headers/footers/author lines) statistically
-        without hardcoding any course names, teacher names, or domain concepts.
+        Extract representative topic titles across the 4 quarters of a document
+        using pure statistical recurrence analysis.
+
+        Algorithm:
+        1. Scan the top 4 lines of all pages in each quarter to capture candidate titles.
+        2. Count how many quarters each candidate appears in. Any candidate appearing in
+           2 or more quarters is identified as a repeating template header/footer/author
+           banner and filtered out automatically.
+        3. Filter out administrative noise (such as agenda, summary, copyright, dr/prof).
+        4. Exclude lines composed solely of tokens from the course title to avoid redundancy.
+        5. Rank valid topic candidate lines by frequency within each quarter.
+        6. Select the top candidate as the quarter's title, falling back to a structured
+           academic label if no distinct candidate is found.
+
+        Args:
+            quarters: 4-element list containing page lists [(page_number, text), ...] for each quarter.
+            subject_name: Name of the course subject to avoid trivial duplicate titles.
+
+        Returns:
+            List of 4 extracted topic titles corresponding to Quarters 1, 2, 3, and 4.
         """
         ADMIN_NOISE = r"(?i)\b(department|faculty|school|university|institute|college|all rights reserved|copyright|agenda|objectives|outline|table of contents|summary|recap|references|textbooks|page \d+|s\.no|slide \d+|session \d+|lecture \d+|unit \d+|module \d+|chapter \d+|thank you|questions\?|example|solution|continued|prof|dr\.|author|instructor|lecturer)\b"
         DANGLING_TAILS = {'for', 'to', 'in', 'of', 'by', 'with', 'and', 'or', 'the', 'a', 'an', 'at', 'from', 'as', 'on'}
@@ -111,6 +165,32 @@ class DocumentIndexer:
         pages_content: Optional[List[Tuple[int, str]]] = None,
         force_refresh: bool = False
     ) -> List[int]:
+        """
+        Ensure that the MySQL relational schema contains exactly 4 sequential concept tiers
+        for the given subject, linked linearly as a Directed Acyclic Graph (DAG).
+
+        Relational Database Steps:
+        1. Checks the TOPICS table. If at least 4 topics exist and force_refresh is False,
+           returns the existing topic_ids in order of difficulty.
+        2. Partitions page content into 4 equal quarters (Quarters 1 through 4).
+        3. Invokes _extract_quarter_topics_pure to determine representative names for each part.
+        4. Deletes outdated topics and prerequisites in TOPIC_PREREQUISITES and TOPICS.
+        5. Inserts 4 new rows into TOPICS with increasing difficulty levels (1 to 4).
+        6. Inserts 3 directed edges into TOPIC_PREREQUISITES:
+           - Part 2 requires Part 1 (importance_weight = 5)
+           - Part 3 requires Part 2 (importance_weight = 5)
+           - Part 4 requires Part 3 (importance_weight = 5)
+
+        Args:
+            subject_id: Relational primary key in the SUBJECTS table.
+            subject_name: Human-readable name of the subject.
+            document_sample: Fallback text sample when page content list is not provided.
+            pages_content: Optional list of tuples (page_number, extracted_text).
+            force_refresh: Boolean flag to force recalculation of topics.
+
+        Returns:
+            List of 4 integer topic_ids ordered from Part 1 (Tier 1) to Part 4 (Tier 4).
+        """
         if not force_refresh:
             existing = execute_query(
                 "SELECT topic_id, topic_name FROM TOPICS WHERE subject_id = %s ORDER BY difficulty_level ASC, topic_id ASC",
@@ -150,6 +230,7 @@ class DocumentIndexer:
             diff_level = q_idx + 1
             base_topics.append((topic_label, diff_level, "p5js", ""))
 
+        # Clear existing topic and prerequisite relationships for this subject
         execute_dml(
             """DELETE FROM TOPIC_PREREQUISITES 
                WHERE topic_id IN (SELECT topic_id FROM TOPICS WHERE subject_id = %s) 
@@ -158,6 +239,7 @@ class DocumentIndexer:
         )
         execute_dml("DELETE FROM TOPICS WHERE subject_id = %s", (subject_id,))
 
+        # Insert new 4 sequential topics into MySQL TOPICS table
         topic_ids = []
         for name, diff, vtype, embed in base_topics:
             execute_dml(
@@ -171,7 +253,7 @@ class DocumentIndexer:
             if t_row:
                 topic_ids.append(t_row["topic_id"])
 
-        # Strictly link Part 1 -> Part 2 -> Part 3 -> Part 4
+        # Insert linear prerequisites into TOPIC_PREREQUISITES (Part 1 -> Part 2 -> Part 3 -> Part 4)
         linear_prereqs = [(1, 0, 5), (2, 1, 5), (3, 2, 5)]
         for child_idx, parent_idx, weight in linear_prereqs:
             if child_idx < len(topic_ids) and parent_idx < len(topic_ids):
@@ -191,6 +273,29 @@ class DocumentIndexer:
         uploaded_by: int = 1,
         explicit_topic_id: Optional[int] = None
     ) -> Tuple[int, int]:
+        """
+        Process, chunk, and index an uploaded course document into ChromaDB and MySQL.
+
+        Workflow:
+        1. Format Detection: Inspects file extension (.pdf vs .txt / .md) and parses text pages.
+        2. Dynamic Topic Generation: Triggers ensure_subject_topics to establish the 4-part skill tree.
+        3. Noise Removal: Filters out presentation boilerplate (e.g. 'Thank You', 'Questions?').
+        4. Relational Tagging: Assigns each chunk to its corresponding quarter topic_id in metadata.
+        5. ChromaDB Upsert: Embeds clean chunks into the collection 'chroma_<subject_key>'.
+        6. Relational Cataloging: Updates or inserts a record in the TEXTBOOKS table and marks
+           the subject as indexed in the SUBJECTS table.
+
+        Args:
+            file_bytes: Raw binary content of the uploaded document.
+            file_name: Original file name string.
+            subject_id: Foreign key referencing SUBJECTS.subject_id in MySQL.
+            subject_key: Normalized slug used as the ChromaDB collection identifier.
+            uploaded_by: User ID of the uploader (defaults to 1).
+            explicit_topic_id: Optional topic ID to override dynamic quarter mapping.
+
+        Returns:
+            Tuple of (total_pages_parsed, total_chunks_indexed).
+        """
         is_pdf = file_name.lower().endswith(".pdf")
         pages_content = []
 
@@ -274,6 +379,7 @@ class DocumentIndexer:
                     "chunk_index": int(idx)
                 })
 
+        # Upsert vector chunks into ChromaDB
         if all_docs:
             vector_service.add_chunks(
                 subject_key=subject_key,

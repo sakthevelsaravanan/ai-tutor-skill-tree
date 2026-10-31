@@ -1,3 +1,20 @@
+"""
+Curriculum Hierarchy, Skill Tree DAG & Recursive Common Table Expression (CTE) Engine.
+
+This module provides endpoints for course structures and prerequisite graph traversal:
+1. Course Catalog: Lists enrolled/indexed courses with aggregate counts of topics and textbooks.
+2. Ordered Topic Sequence: Fetches concept topics ordered by difficulty level and ID.
+3. Recursive CTE Ancestor Walk (/prerequisites/{topic_id}):
+   Traverses backwards from a target concept through direct and transitive prerequisite
+   relationships in TOPIC_PREREQUISITES. Computes traversal depth and learning path string.
+4. Recursive CTE Descendant Walk (/unlocked/{topic_id}):
+   Traverses forwards from a mastered concept to determine all downstream concepts
+   unlocked across subsequent tiers.
+5. Skill Tree DAG Synthesis (/graph/{subject_id}):
+   Supplies node attributes (difficulty, visual type) and weighted directed edges
+   to drive the frontend Directed Acyclic Graph (DAG) interactive visualization.
+"""
+
 from fastapi import APIRouter, HTTPException
 from backend.database import execute_query, execute_one
 
@@ -5,6 +22,10 @@ router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"])
 
 @router.get("/subjects")
 def get_subjects():
+    """
+    Retrieve all course subjects with aggregated counts of associated topics and indexed textbooks.
+    Performs SQL GROUP BY with LEFT JOIN across SUBJECTS, TOPICS, and TEXTBOOKS tables.
+    """
     return execute_query("""
         SELECT 
             s.subject_id,
@@ -23,6 +44,9 @@ def get_subjects():
 
 @router.get("/topics/{subject_id}")
 def get_topics_by_subject(subject_id: int):
+    """
+    Fetch all learning topics for a given subject ordered sequentially by difficulty level.
+    """
     return execute_query("""
         SELECT 
             topic_id,
@@ -38,7 +62,18 @@ def get_topics_by_subject(subject_id: int):
 
 @router.get("/prerequisites/{topic_id}")
 def get_topic_prerequisite_tree(topic_id: int):
-    # Executes Member 1 Recursive CTE (Ancestor Walk)
+    """
+    Recursive Common Table Expression (CTE) - Ancestor Prerequisite Walk.
+
+    SQL Execution Mechanics:
+    - Anchor Member: Selects immediate parent prerequisites from TOPIC_PREREQUISITES
+      where topic_id equals the requested topic_id, setting traversal_depth = 1.
+    - Recursive Member: Joins PrerequisiteChain with TOPIC_PREREQUISITES on
+      pc.prereq_topic_id = tp_parent.topic_id, incrementing traversal_depth and concatenating
+      learning_order_path.
+    - Outer Aggregation: Groups by prereq_topic_id to resolve diamond dependencies,
+      taking MIN(traversal_depth) and MAX(importance_weight).
+    """
     cte_query = """
         WITH RECURSIVE PrerequisiteChain AS (
             SELECT 
@@ -83,7 +118,16 @@ def get_topic_prerequisite_tree(topic_id: int):
 
 @router.get("/unlocked/{topic_id}")
 def get_unlocked_topics(topic_id: int):
-    # Executes Member 1 Recursive CTE (Descendant Walk)
+    """
+    Recursive Common Table Expression (CTE) - Descendant Unlocked Topics Walk.
+
+    SQL Execution Mechanics:
+    - Anchor Member: Identifies topics immediately unlocked when the given topic_id is mastered
+      (WHERE tp.prereq_topic_id = %s), setting unlock_tier = 1.
+    - Recursive Member: Joins UnlockedTopicsChain with downstream topics in TOPIC_PREREQUISITES,
+      incrementing unlock_tier at each level of progression.
+    - Outer Aggregation: Groups by unlocked_topic_id and orders by unlock_tier ASC.
+    """
     cte_query = """
         WITH RECURSIVE UnlockedTopicsChain AS (
             SELECT 
@@ -121,6 +165,12 @@ def get_unlocked_topics(topic_id: int):
 
 @router.get("/graph/{subject_id}")
 def get_subject_graph(subject_id: int):
+    """
+    Generate graph payload for frontend DAG visualization.
+    Returns:
+    - nodes: Array of topic vertices { id, label, difficulty_level, visual_type }.
+    - edges: Array of directed dependencies { source: prereq_id, target: topic_id, weight }.
+    """
     nodes = execute_query("""
         SELECT topic_id AS id, topic_name AS label, difficulty_level, visual_type
         FROM TOPICS
@@ -141,6 +191,9 @@ def get_subject_graph(subject_id: int):
 
 @router.get("/visual/{topic_id}")
 def get_visual_config(topic_id: int):
+    """
+    Fetch interactive visualizer configuration and simulation embed URL for a topic.
+    """
     topic = execute_one(
         "SELECT topic_id, topic_name, visual_type, embed_url FROM TOPICS WHERE topic_id = %s",
         (topic_id,)

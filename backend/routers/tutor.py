@@ -1,3 +1,21 @@
+"""
+Slide-Grounded Vector RAG Tutoring Pipeline & Graph Traversal Engine.
+
+This module implements the core RAG tutoring logic:
+1. Relational Graph Context: Resolves active concept and queries MySQL 8.0 with a
+   Recursive Common Table Expression (CTE) to determine valid prerequisite ancestor topics.
+2. Contextual Query Expansion: Automatically expands short or follow-up prompts
+   (e.g., "how to solve", "matrix") using previous conversation turn history from MySQL.
+3. Dense Vector Retrieval: Queries ChromaDB collections using cosine similarity.
+   Applies relational prerequisite filtering (WHERE topic_id IN (...)) when enabled.
+4. Deterministic Numerical Solver: Solves matrix cryptography problems (Hill Cipher encryption/decryption)
+   with full mathematical steps, modular inverse checks, and LaTeX formatting.
+5. Grounded Slide Synthesis: Parses raw vector chunks into structured slide cards displaying
+   matched slide titles, slide numbers, similarity match percentages, formulas, and bullet points.
+6. Persistent Conversation Logging: Commits student and tutor interactions to CONVERSATION_LOGS
+   for auditability and session resumption.
+"""
+
 import os
 import re
 from typing import List, Dict, Optional, Any, Tuple
@@ -9,6 +27,7 @@ from backend.vector_service import vector_service
 router = APIRouter(prefix="/api/tutor", tags=["Slide-Grounded Vector RAG Tutoring Pipeline"])
 
 class TutorQueryRequest(BaseModel):
+    """Request model for student queries directed to the Socratic RAG tutor."""
     query: str
     subject_id: int
     topic_id: Optional[int] = None
@@ -17,6 +36,7 @@ class TutorQueryRequest(BaseModel):
     include_prereqs: bool = True
 
 class TutorQueryResponse(BaseModel):
+    """Structured response model containing tutor explanation and grounding metadata."""
     answer: str
     target_topic: Optional[Dict[str, Any]] = None
     prerequisites: List[Dict[str, Any]] = []
@@ -29,6 +49,10 @@ class TutorQueryResponse(BaseModel):
     top_source: Optional[str] = None
 
 def _fetch_prerequisite_chain(topic_id: int) -> List[Dict]:
+    """
+    Execute a Recursive Common Table Expression (CTE) in MySQL 8.0 to traverse
+    the Directed Acyclic Graph (DAG) backwards from target topic to all ancestor prerequisites.
+    """
     cte_query = """
         WITH RECURSIVE PrerequisiteChain AS (
             SELECT 
@@ -331,6 +355,22 @@ def _extract_slide_topics_and_definitions(
     chunks: List[Dict],
     subject_name: str = ""
 ) -> List[Dict[str, Any]]:
+    """
+    Parse dense vector chunks returned from ChromaDB into structured slide cards.
+
+    Processing Steps:
+    1. Extracts metadata attributes: file_name, page_number, cosine similarity distance.
+    2. Filters out presentation boilerplate and administrative acknowledgment slides.
+    3. Identifies the primary slide header as title and following lines as body bullets/formulas.
+    4. Deduplicates slides with identical normalized titles to present concise summaries.
+
+    Args:
+        chunks: List of dictionary records returned by vector_service.search().
+        subject_name: Optional course subject string to strip redundant course headers.
+
+    Returns:
+        List of structured slide dictionaries with keys: title, body, similarity, page, file.
+    """
     parsed_slides = []
     seen_titles = set()
 
@@ -396,6 +436,26 @@ def _synthesize_slide_rag_answer(
     subject_name: str,
     clean_topic: str
 ) -> str:
+    """
+    Synthesize a clean, academically grounded response from extracted slide cards.
+
+    Key Principles:
+    - Zero Hallucination: Relies strictly on retrieved slide content and exact terminology.
+    - Mathematical Precision: Formats mathematical formulas, matrices, and state transitions
+      into markdown code blocks and LaTeX KaTeX syntax.
+    - Grounding Badges: Prefixes every topic section with its exact cosine match percentage
+      and slide page number for verifiable attribution.
+    - Zero Generic Fillers: Omits conversational filler phrases to provide concise answers.
+
+    Args:
+        query: User's original prompt.
+        parsed_slides: Structured slide dictionaries extracted from top-K chunks.
+        subject_name: Name of the course subject.
+        clean_topic: Active concept topic name.
+
+    Returns:
+        Formatted markdown string ready for rendering in the Tutor chat interface.
+    """
     if not parsed_slides:
         return (
             f"No direct matching topics were found in the uploaded course slides for **{subject_name}** "
@@ -462,6 +522,23 @@ def _synthesize_slide_rag_answer(
 
 @router.post("/query", response_model=TutorQueryResponse)
 def socratic_tutor_query(req: TutorQueryRequest):
+    """
+    Primary Socratic RAG Tutoring Endpoint.
+
+    Algorithmic Workflow:
+    1. Relational Validation: Confirms subject existence in SUBJECTS table.
+    2. Hierarchical Prerequisite Graph Traversal: If topic_id is specified, executes
+       MySQL 8.0 Recursive CTE to retrieve all prerequisite ancestor topics.
+    3. Deterministic Cryptographic Math Detection: If prompt contains a matrix problem
+       (e.g., Hill Cipher encryption or decryption), evaluates it deterministically with
+       step-by-step modular linear algebra ($C = KP \\bmod 26$, modular inverse).
+    4. Conversational Context Expansion: Expands short contextual follow-up queries
+       (e.g. "how to solve", "give steps") with previous user turn content from CONVERSATION_LOGS.
+    5. Top-K Semantic Vector Retrieval: Searches ChromaDB collection using cosine similarity.
+       When relational prerequisite filtering is active, filters candidate chunks to valid topic_ids.
+    6. Slide Information Synthesis: Parses top chunks into structured slide cards with match metrics.
+    7. Database Turn Logging: Inserts user prompt and tutor response into CONVERSATION_LOGS.
+    """
     subject = execute_one(
         "SELECT subject_id, subject_key, subject_name FROM SUBJECTS WHERE subject_id = %s",
         (req.subject_id,)

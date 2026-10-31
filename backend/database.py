@@ -1,3 +1,18 @@
+"""
+Relational Database Layer & Connection Management.
+
+Provides high-performance database connectivity:
+1. Primary Database: MySQL 8.0 via PyMySQL with DictCursor for dictionary row mapping.
+2. Fallback Engine: Seamless SQLite fallback (ai_tutor_fallback.db) for offline demonstration
+   if MySQL server is unreachable.
+3. Transaction Management: get_transaction context manager for ACID transactions (BEGIN, COMMIT, ROLLBACK).
+4. Helper Wrappers:
+   - execute_query: Returns list of matching row dicts.
+   - execute_one: Returns single matching row dict or None.
+   - execute_dml: Executes INSERT/UPDATE/DELETE and returns lastrowid or rowcount.
+   - call_procedure: Invokes stored procedures (e.g. sp_recommend_next_topic).
+"""
+
 from contextlib import contextmanager
 import pymysql
 from pymysql.cursors import DictCursor

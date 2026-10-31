@@ -1,8 +1,22 @@
+"""
+ChromaDB Vector Store Service Layer.
+
+Wraps the ChromaDB PersistentClient to provide:
+1. Isolated Collections: Namespaced by subject slug ('chroma_<subject_key>').
+2. Metric Space: HNSW index using Cosine Distance (1.0 - cosine_distance = cosine_similarity).
+3. Batch Upserting: Efficiently processes document chunks in configurable batch sizes.
+4. Filtered Semantic Retrieval: Supports Top-K search with metadata filtering (e.g., topic_id).
+5. Vector Modification & Deletion: In-place chunk updates, selective deletions, and collection purges.
+"""
+
 import chromadb
 from typing import List, Dict, Optional, Any
 from backend.config import settings
 
 class VectorStoreService:
+    """
+    Manages vector embeddings and collections within ChromaDB.
+    """
     def __init__(self, persist_directory: str = settings.CHROMA_PERSIST_DIR):
         self.client = chromadb.PersistentClient(path=persist_directory)
 
@@ -11,6 +25,9 @@ class VectorStoreService:
         return f"chroma_{clean_key}"
 
     def get_or_create_collection(self, subject_key: str):
+        """
+        Get existing collection or provision a new one configured with cosine space.
+        """
         col_name = self._get_collection_name(subject_key)
         return self.client.get_or_create_collection(
             name=col_name,
@@ -26,6 +43,9 @@ class VectorStoreService:
         ids: List[str],
         batch_size: int = 100
     ) -> int:
+        """
+        Upsert a batch of text chunks and their metadata into the subject's collection.
+        """
         col = self.get_or_create_collection(subject_key)
         total = len(ids)
         for i in range(0, total, batch_size):
@@ -45,6 +65,10 @@ class VectorStoreService:
         n_results: int = 4,
         where_filter: Optional[Dict] = None
     ) -> List[Dict]:
+        """
+        Execute dense vector search against the collection using query text.
+        Returns matched documents, metadata, distance, and similarity score.
+        """
         col_name = self._get_collection_name(subject_key)
         try:
             col = self.client.get_collection(col_name)
