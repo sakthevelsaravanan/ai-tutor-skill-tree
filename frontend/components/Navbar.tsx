@@ -28,6 +28,7 @@ export function Navbar({
   const navItems = [
     { id: "upload" as const, label: "Ingest", icon: UploadCloud },
     { id: "skilltree" as const, label: "Skill Tree", icon: GitFork, disabled: !hasDocument },
+    { id: "tutor" as const, label: "AI Tutor", icon: MessageSquare, disabled: !hasDocument },
     ...(isAdmin ? [{ id: "vectors" as const, label: "Vectors", icon: Database, disabled: false }] : []),
   ];
 
@@ -40,10 +41,7 @@ export function Navbar({
             onClick={() => setActiveTab("upload")}
             className="flex items-center gap-2 text-left focus:outline-none group"
           >
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500 text-white font-bold text-xs shadow-sm shadow-orange-500/30 transition-transform group-hover:scale-105">
-              AI
-            </div>
-            <span className="text-sm font-semibold tracking-tight text-zinc-100">AI Tutor</span>
+            <span className="text-sm font-bold tracking-tight text-zinc-100 group-hover:text-orange-400 transition-colors">AI Tutor</span>
           </button>
 
           {hasDocument && selectedSubjectName && (

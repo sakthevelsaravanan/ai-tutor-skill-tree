@@ -195,18 +195,14 @@ export function DocumentUpload({
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-8 space-y-8">
+    <div className="max-w-4xl mx-auto py-2 sm:py-3 space-y-4">
       {/* Pristine Clean Header */}
-      <div className="text-center space-y-3">
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-950/40 border border-orange-800/60 text-xs font-mono text-orange-400">
-          <Sparkles className="h-3.5 w-3.5" />
-          <span>Step 1: Course Ingestion & Relational Setup</span>
-        </div>
-        <h1 className="text-3xl font-bold tracking-tight text-zinc-100">
+      <div className="text-center space-y-1.5">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">
           Ingest Course Materials
         </h1>
-        <p className="text-xs sm:text-sm text-zinc-400 max-w-lg mx-auto leading-relaxed">
-          Upload any STEM textbook, syllabus, or lecture notes. Name and classify your course—the system dynamically builds the relational skill tree and vectorizes chunks into ChromaDB.
+        <p className="text-xs text-zinc-400 max-w-lg mx-auto leading-relaxed">
+          Upload any STEM textbook, syllabus, or lecture notes. The system dynamically builds the relational skill tree and vectorizes chunks into ChromaDB.
         </p>
       </div>
 

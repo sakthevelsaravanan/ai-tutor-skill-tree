@@ -150,7 +150,7 @@ export function TutorChat({
     if (!topicName) return "this concept";
     return topicName
       .replace(/^\d+[\s_-]*/, "")
-      .replace(/:\s*(Fundamental Concepts|Structural Models|Dynamic Processes|Advanced Synthesis).*$/i, "")
+      .replace(/^Part\s*\d+:\s*/i, "")
       .replace(/[_\-]+/g, " ")
       .trim();
   };
@@ -256,11 +256,7 @@ export function TutorChat({
                 key={msg.id}
                 className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
               >
-                {!isUser && (
-                  <div className="h-7 w-7 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-300 shrink-0 text-[10px] font-bold mt-0.5">
-                    AI
-                  </div>
-                )}
+
 
                 <div
                   className={`max-w-[88%] sm:max-w-[80%] rounded-xl px-4 py-3 text-xs leading-relaxed space-y-2.5 ${
@@ -290,9 +286,7 @@ export function TutorChat({
 
         {loading && (
           <div className="flex gap-3 justify-start">
-            <div className="h-7 w-7 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-orange-400 shrink-0 text-[10px] font-bold">
-              AI
-            </div>
+
             <div className="rounded-xl px-4 py-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-center gap-2">
               <RefreshCw className="h-3.5 w-3.5 animate-spin text-orange-400" />
               <span>Querying ChromaDB & Relational Prerequisite Chain...</span>
@@ -443,7 +437,7 @@ function renderInlineContent(rawText: string, isUser: boolean = false): React.Re
 }
 
 interface ParsedBlock {
-  type: "h2" | "h3" | "h4" | "p" | "display_math" | "reflection" | "ol" | "ul";
+  type: "h2" | "h3" | "h4" | "p" | "display_math" | "callout" | "ol" | "ul";
   content: string;
 }
 
@@ -466,13 +460,17 @@ function parseContentBlocks(markdown: string): ParsedBlock[] {
       continue;
     }
 
-    // Check if reflection block
+    // Suppress any legacy reflection text if present
     if (
-      trimmed.startsWith("> ") ||
       trimmed.startsWith("Think about this:") ||
       trimmed.startsWith("**Socratic Reflection")
     ) {
-      blocks.push({ type: "reflection", content: trimmed.replace(/^>\s*/, "") });
+      continue;
+    }
+
+    // Check if callout / formula block
+    if (trimmed.startsWith("> ")) {
+      blocks.push({ type: "callout", content: trimmed.replace(/^>\s*/, "") });
       continue;
     }
 
@@ -493,12 +491,15 @@ function parseContentBlocks(markdown: string): ParsedBlock[] {
       const line = lines[i];
       const lineTrim = line.trim();
 
-      if (lineTrim.startsWith("### ")) {
+      if (lineTrim.startsWith("#### ")) {
         flushCurrent();
-        blocks.push({ type: "h4", content: lineTrim.replace(/^###\s+/, "") });
+        blocks.push({ type: "h4", content: lineTrim.replace(/^####\s+/, "") });
+      } else if (lineTrim.startsWith("### ")) {
+        flushCurrent();
+        blocks.push({ type: "h3", content: lineTrim.replace(/^###\s+/, "") });
       } else if (lineTrim.startsWith("## ")) {
         flushCurrent();
-        blocks.push({ type: "h3", content: lineTrim.replace(/^##\s+/, "") });
+        blocks.push({ type: "h2", content: lineTrim.replace(/^##\s+/, "") });
       } else if (lineTrim.startsWith("# ")) {
         flushCurrent();
         blocks.push({ type: "h2", content: lineTrim.replace(/^#\s+/, "") });
@@ -585,14 +586,14 @@ function renderFormattedContent(content: string, isUser: boolean = false) {
           return <MathSnippet key={idx} tex={b.content} displayMode={true} isUser={isUser} />;
         }
 
-        if (b.type === "reflection") {
+        if (b.type === "callout") {
           return (
             <div
               key={idx}
-              className={`p-3 rounded-lg border-l-2 text-xs leading-relaxed my-2 ${
+              className={`p-2.5 rounded-lg border-l-2 text-xs leading-relaxed my-2 font-mono ${
                 isUser
                   ? "bg-orange-700/40 border-white text-white"
-                  : "bg-orange-950/20 border-orange-500/80 text-zinc-200 italic"
+                  : "bg-zinc-900 border-orange-500/80 text-orange-200"
               }`}
             >
               {renderInlineContent(b.content, isUser)}
