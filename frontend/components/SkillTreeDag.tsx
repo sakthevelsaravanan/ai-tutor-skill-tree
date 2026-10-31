@@ -1,3 +1,17 @@
+/**
+ * Skill Tree Directed Acyclic Graph (DAG) Visualization Component.
+ *
+ * Responsibilities:
+ * 1. Topological Tier Grouping: Organizes course concepts into progressive learning tiers
+ *    (Tier 1: Foundations to Tier 4: Advanced Systems) derived from MySQL difficulty_level.
+ * 2. Prerequisite Traversal: On node selection, queries backend Recursive CTEs to retrieve
+ *    the full chain of direct and transitive ancestor prerequisites.
+ * 3. Forward Unlock Preview: Queries backend Recursive CTE to identify downstream concepts
+ *    unlocked upon mastering the selected concept.
+ * 4. Interactive Learning Launcher: Provides one-click transition to launch the Socratic AI Tutor
+ *    focused on the active concept.
+ */
+
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";

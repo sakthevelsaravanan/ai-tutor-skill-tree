@@ -1,3 +1,14 @@
+/**
+ * Socratic RAG Tutor Interactive Chat Component.
+ *
+ * Capabilities:
+ * 1. Slide-Grounded Vector Dialogue: Dispatches student queries to the backend RAG pipeline.
+ * 2. KaTeX LaTeX Math Rendering: Formats inline $...$ and block $$...$$ equations into math formulas.
+ * 3. Match Attributions: Renders cosine similarity badges and slide references for each extracted topic.
+ * 4. Relational Prerequisite Toggle: Enables or disables prerequisite-bounded vector search.
+ * 5. Dynamic Concept Context: Synchronizes current topic and conversation turns with MySQL sessions.
+ */
+
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";

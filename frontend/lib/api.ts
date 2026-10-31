@@ -1,3 +1,14 @@
+/**
+ * Frontend HTTP Client & REST API Integration Layer.
+ *
+ * Provides typed asynchronous methods connecting Next.js UI components to the FastAPI backend:
+ * 1. Authentication & RBAC: User login, session profiles, role permission matrix.
+ * 2. Curriculum & Skill Tree: Courses, topics, Recursive CTE ancestor/descendant trees, and DAG graph data.
+ * 3. ChromaDB Vector RUD: Semantic vector search, chunk creation, editing, deletion, and admin collection purge.
+ * 4. Socratic RAG Tutor: Slide-grounded vector queries with relational prerequisite filtering.
+ * 5. Learning Sessions & Mastery: Dialogue turn logging, quiz evaluations, and stored procedure recommendations.
+ */
+
 import {
   Subject,
   Topic,
