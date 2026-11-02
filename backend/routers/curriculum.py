@@ -253,8 +253,23 @@ def mark_topic_completed(topic_id: int, req: TopicCompletionRequest):
     if not topic:
         raise HTTPException(status_code=404, detail=f"Topic with ID {topic_id} not found.")
 
-    # 3. Insert idempotently. The unique key is the concurrency-safe guard if
-    # two completion requests arrive at the same time.
+    # 3. Check if already marked completed to return accurate message and ensure idempotency
+    existing = execute_one(
+        "SELECT completion_id, completed_at FROM STUDENT_TOPIC_COMPLETIONS WHERE user_id = %s AND topic_id = %s",
+        (req.user_id, topic_id)
+    )
+    if existing:
+        raw_at = existing.get("completed_at")
+        completed_at_str = raw_at.isoformat() if hasattr(raw_at, "isoformat") else (str(raw_at) if raw_at else None)
+        return TopicCompletionResponse(
+            status="success",
+            message="Topic is already marked as completed.",
+            topic_id=topic_id,
+            user_id=req.user_id,
+            is_completed=True,
+            completed_at=completed_at_str
+        )
+
     execute_dml(
         "INSERT IGNORE INTO STUDENT_TOPIC_COMPLETIONS (user_id, topic_id) VALUES (%s, %s)",
         (req.user_id, topic_id)

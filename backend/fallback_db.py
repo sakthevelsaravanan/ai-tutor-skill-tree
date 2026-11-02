@@ -8,12 +8,16 @@ class SQLiteCursorProxy:
         self._cursor = cursor
 
     def execute(self, sql, params=None):
+        if "INSERT IGNORE INTO" in sql:
+            sql = sql.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO")
         if params is not None:
             sql = sql.replace("%s", "?")
             return self._cursor.execute(sql, params)
         return self._cursor.execute(sql)
 
     def executemany(self, sql, seq_of_params):
+        if "INSERT IGNORE INTO" in sql:
+            sql = sql.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO")
         sql = sql.replace("%s", "?")
         return self._cursor.executemany(sql, seq_of_params)
 
