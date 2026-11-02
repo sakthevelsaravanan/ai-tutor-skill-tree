@@ -13,10 +13,15 @@ This module provides endpoints for course structures and prerequisite graph trav
 5. Skill Tree DAG Synthesis (/graph/{subject_id}):
    Supplies node attributes (difficulty, visual type) and weighted directed edges
    to drive the frontend Directed Acyclic Graph (DAG) interactive visualization.
+6. Topic Completion Tracking (/topics/{topic_id}/complete, /completed/{user_id}):
+   Allows authenticated students to manually mark topics as completed after learning them
+   in the Socratic AI chatbox. Persists completion status with unique constraint.
 """
 
-from fastapi import APIRouter, HTTPException
-from backend.database import execute_query, execute_one
+from typing import Optional, List
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+from backend.database import execute_query, execute_one, execute_dml
 
 router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"])
 
@@ -201,3 +206,154 @@ def get_visual_config(topic_id: int):
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
     return topic
+
+
+# ============================================================
+# Manual Topic Completion Tracking
+# ============================================================
+
+class TopicCompletionRequest(BaseModel):
+    user_id: int
+
+class TopicCompletionResponse(BaseModel):
+    status: str
+    message: str
+    topic_id: int
+    user_id: int
+    is_completed: bool
+    completed_at: Optional[str] = None
+
+class UserCompletedTopicsResponse(BaseModel):
+    user_id: int
+    completed_topic_ids: List[int]
+    total_completed: int
+
+class TopicStatusResponse(BaseModel):
+    topic_id: int
+    user_id: int
+    is_completed: bool
+    completed_at: Optional[str] = None
+
+@router.post("/topics/{topic_id}/complete", response_model=TopicCompletionResponse)
+def mark_topic_completed(topic_id: int, req: TopicCompletionRequest):
+    """
+    Manually marks a specific topic as completed for the authenticated student.
+    Persists completion in MySQL / fallback database in STUDENT_TOPIC_COMPLETIONS.
+    Prevents duplicate completion records and ensures user isolation.
+    """
+    # 1. Verify user exists
+    user = execute_one("SELECT user_id, full_name, role FROM USERS WHERE user_id = %s", (req.user_id,))
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with ID {req.user_id} not found.")
+    if user.get("role") != "student":
+        raise HTTPException(status_code=403, detail="Only students can mark topics as completed.")
+
+    # 2. Verify topic exists
+    topic = execute_one("SELECT topic_id, topic_name, subject_id FROM TOPICS WHERE topic_id = %s", (topic_id,))
+    if not topic:
+        raise HTTPException(status_code=404, detail=f"Topic with ID {topic_id} not found.")
+
+    # 3. Insert idempotently. The unique key is the concurrency-safe guard if
+    # two completion requests arrive at the same time.
+    execute_dml(
+        "INSERT IGNORE INTO STUDENT_TOPIC_COMPLETIONS (user_id, topic_id) VALUES (%s, %s)",
+        (req.user_id, topic_id)
+    )
+
+    created = execute_one(
+        "SELECT completion_id, completed_at FROM STUDENT_TOPIC_COMPLETIONS WHERE user_id = %s AND topic_id = %s",
+        (req.user_id, topic_id)
+    )
+    raw_at = created.get("completed_at") if created else None
+    completed_at_str = raw_at.isoformat() if hasattr(raw_at, "isoformat") else (str(raw_at) if raw_at else None)
+
+    return TopicCompletionResponse(
+        status="success",
+        message="Topic marked as completed!",
+        topic_id=topic_id,
+        user_id=req.user_id,
+        is_completed=True,
+        completed_at=completed_at_str
+    )
+
+@router.delete("/topics/{topic_id}/complete", response_model=TopicCompletionResponse)
+def unmark_topic_completed(topic_id: int, user_id: int = Query(...)):
+    """
+    Optionally unmarks a completed topic for the authenticated student.
+    """
+    execute_dml(
+        "DELETE FROM STUDENT_TOPIC_COMPLETIONS WHERE user_id = %s AND topic_id = %s",
+        (user_id, topic_id)
+    )
+    return TopicCompletionResponse(
+        status="success",
+        message="Topic completion removed.",
+        topic_id=topic_id,
+        user_id=user_id,
+        is_completed=False,
+        completed_at=None
+    )
+
+@router.get("/completed/{user_id}", response_model=UserCompletedTopicsResponse)
+def get_user_completed_topics(user_id: int, subject_id: Optional[int] = None):
+    """
+    Retrieves the list of completed topic IDs for a given student user.
+    Optionally filtered by subject_id.
+    """
+    user = execute_one("SELECT user_id FROM USERS WHERE user_id = %s", (user_id,))
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found.")
+
+    if subject_id is not None:
+        rows = execute_query("""
+            SELECT c.topic_id
+            FROM STUDENT_TOPIC_COMPLETIONS c
+            INNER JOIN TOPICS t ON c.topic_id = t.topic_id
+            WHERE c.user_id = %s AND t.subject_id = %s
+            ORDER BY c.completed_at DESC
+        """, (user_id, subject_id))
+    else:
+        rows = execute_query("""
+            SELECT topic_id
+            FROM STUDENT_TOPIC_COMPLETIONS
+            WHERE user_id = %s
+            ORDER BY completed_at DESC
+        """, (user_id,))
+
+    completed_ids = [r["topic_id"] for r in rows]
+    return UserCompletedTopicsResponse(
+        user_id=user_id,
+        completed_topic_ids=completed_ids,
+        total_completed=len(completed_ids)
+    )
+
+@router.get("/topics/{topic_id}/status/{user_id}", response_model=TopicStatusResponse)
+def get_topic_completion_status(topic_id: int, user_id: int):
+    """
+    Fetches the completion status of a single topic for a given student.
+    """
+    if not execute_one("SELECT user_id FROM USERS WHERE user_id = %s", (user_id,)):
+        raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found.")
+    if not execute_one("SELECT topic_id FROM TOPICS WHERE topic_id = %s", (topic_id,)):
+        raise HTTPException(status_code=404, detail=f"Topic with ID {topic_id} not found.")
+
+    row = execute_one(
+        "SELECT completion_id, completed_at FROM STUDENT_TOPIC_COMPLETIONS WHERE user_id = %s AND topic_id = %s",
+        (user_id, topic_id)
+    )
+    if not row:
+        return TopicStatusResponse(
+            topic_id=topic_id,
+            user_id=user_id,
+            is_completed=False,
+            completed_at=None
+        )
+
+    raw_at = row.get("completed_at")
+    completed_at_str = raw_at.isoformat() if hasattr(raw_at, "isoformat") else (str(raw_at) if raw_at else None)
+    return TopicStatusResponse(
+        topic_id=topic_id,
+        user_id=user_id,
+        is_completed=True,
+        completed_at=completed_at_str
+    )

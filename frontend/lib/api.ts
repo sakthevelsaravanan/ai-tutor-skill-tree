@@ -7,6 +7,7 @@
  * 3. ChromaDB Vector RUD: Semantic vector search, chunk creation, editing, deletion, and admin collection purge.
  * 4. Socratic RAG Tutor: Slide-grounded vector queries with relational prerequisite filtering.
  * 5. Learning Sessions & Mastery: Dialogue turn logging, quiz evaluations, and stored procedure recommendations.
+ * 6. Topic Completion Tracking: Persists and fetches manual student topic completions.
  */
 
 import {
@@ -28,6 +29,8 @@ import {
   RecommendationResponse,
   SubjectMasteryResponse,
   SessionStage,
+  TopicCompletionStatus,
+  UserCompletedTopicsResponse,
 } from "./types";
 
 const API_BASE =
@@ -214,5 +217,40 @@ export const api = {
 
   getSessionDetails: (sessionId: string) =>
     request<LearningSession>(`/api/sessions/${sessionId}`),
-};
 
+  // ============================================================
+  // Topic Completion Tracking APIs
+  // ============================================================
+
+  markTopicComplete: (topicId: number, userId: number) =>
+    request<{
+      status: string;
+      message: string;
+      topic_id: number;
+      user_id: number;
+      is_completed: boolean;
+      completed_at?: string;
+    }>(`/api/curriculum/topics/${topicId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+
+  unmarkTopicComplete: (topicId: number, userId: number) =>
+    request<{
+      status: string;
+      message: string;
+      topic_id: number;
+      user_id: number;
+      is_completed: boolean;
+    }>(`/api/curriculum/topics/${topicId}/complete?user_id=${userId}`, {
+      method: "DELETE",
+    }),
+
+  getCompletedTopics: (userId: number, subjectId?: number) => {
+    const q = subjectId !== undefined && subjectId !== null ? `?subject_id=${subjectId}` : "";
+    return request<UserCompletedTopicsResponse>(`/api/curriculum/completed/${userId}${q}`);
+  },
+
+  getTopicCompletionStatus: (topicId: number, userId: number) =>
+    request<TopicCompletionStatus>(`/api/curriculum/topics/${topicId}/status/${userId}`),
+};

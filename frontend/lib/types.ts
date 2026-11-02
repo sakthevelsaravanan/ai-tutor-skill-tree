@@ -178,3 +178,19 @@ export interface SubjectMasteryResponse {
   needs_review_count?: number | null;
 }
 
+// ============================================================
+// Manual Topic Completion Tracking Types
+// ============================================================
+
+export interface TopicCompletionStatus {
+  topic_id: number;
+  user_id: number;
+  is_completed: boolean;
+  completed_at?: string | null;
+}
+
+export interface UserCompletedTopicsResponse {
+  user_id: number;
+  completed_topic_ids: number[];
+  total_completed: number;
+}

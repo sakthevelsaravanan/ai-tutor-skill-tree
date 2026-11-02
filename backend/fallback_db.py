@@ -179,6 +179,18 @@ def init_fallback_db():
         reason TEXT,
         changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS STUDENT_TOPIC_COMPLETIONS (
+        completion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        topic_id INTEGER NOT NULL,
+        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, topic_id),
+        FOREIGN KEY (user_id) REFERENCES USERS(user_id) ON DELETE CASCADE,
+        FOREIGN KEY (topic_id) REFERENCES TOPICS(topic_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_comp_user ON STUDENT_TOPIC_COMPLETIONS(user_id);
+    CREATE INDEX IF NOT EXISTS idx_comp_topic ON STUDENT_TOPIC_COMPLETIONS(topic_id);
     """)
 
     cur.execute("SELECT COUNT(*) FROM USERS")

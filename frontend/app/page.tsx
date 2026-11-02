@@ -13,10 +13,10 @@ import { X, Sparkles, RefreshCw } from "lucide-react";
 
 export default function Home() {
   const [currentUser, setCurrentUser] = useState<User>({
-    user_id: 1,
-    full_name: "Dr. Alan Turing",
-    email: "turing@aitutor.edu",
-    role: "instructor",
+    user_id: 3,
+    full_name: "Roshan Kumar",
+    email: "roshan@student.edu",
+    role: "student",
   });
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -32,6 +32,9 @@ export default function Home() {
   // Selection states
   const [selectedTopicIdForTutor, setSelectedTopicIdForTutor] = useState<number | null>(null);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState<boolean>(false);
+
+  // Manual Topic Completion State for active student
+  const [completedTopicIds, setCompletedTopicIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     async function initData() {
@@ -53,9 +56,27 @@ export default function Home() {
           setHasDocument(true);
         }
 
-        if (usersRes.length > 0) {
-          const defaultUser = usersRes.find((u) => u.role === "instructor") || usersRes[0];
-          setCurrentUser(defaultUser);
+        // Restore persisted user if exists in localStorage, else default to student
+        let resolvedUser: User | null = null;
+        if (typeof window !== "undefined") {
+          const savedUserStr = localStorage.getItem("ai_tutor_user");
+          if (savedUserStr) {
+            try {
+              const parsed = JSON.parse(savedUserStr);
+              const matched = usersRes.find((u) => u.user_id === parsed.user_id);
+              if (matched) resolvedUser = matched;
+            } catch {
+              // Ignore invalid storage
+            }
+          }
+        }
+
+        if (!resolvedUser && usersRes.length > 0) {
+          resolvedUser = usersRes.find((u) => u.role === "student") || usersRes[0];
+        }
+
+        if (resolvedUser) {
+          setCurrentUser(resolvedUser);
         }
 
         if (typeof window !== "undefined") {
@@ -79,6 +100,35 @@ export default function Home() {
     initData();
   }, []);
 
+  // Persist user selection across page reloads
+  useEffect(() => {
+    if (typeof window !== "undefined" && currentUser) {
+      localStorage.setItem("ai_tutor_user", JSON.stringify(currentUser));
+    }
+  }, [currentUser]);
+
+  // Synchronize completed topics for active user and subject
+  useEffect(() => {
+    let active = true;
+    setCompletedTopicIds(new Set());
+    async function fetchUserCompletions() {
+      if (!currentUser?.user_id) return;
+      try {
+        const res = await api.getCompletedTopics(currentUser.user_id, selectedSubjectId || undefined);
+        if (active) setCompletedTopicIds(new Set(res.completed_topic_ids));
+      } catch (err) {
+        console.error("Failed to load student topic completions:", err);
+      }
+    }
+    fetchUserCompletions();
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.user_id, selectedSubjectId]);
+
+  const handleTopicCompleted = (topicId: number) => {
+    setCompletedTopicIds((prev) => new Set([...Array.from(prev), topicId]));
+  };
 
   useEffect(() => {
     if (currentUser.role !== "admin" && activeTab === "vectors") {
@@ -221,6 +271,8 @@ export default function Home() {
               <SkillTreeDag
                 subject={activeSubject}
                 subjects={subjects}
+                currentUser={currentUser}
+                completedTopicIds={completedTopicIds}
                 onSelectTopicForTutor={handleSelectTopicForTutor}
               />
             )}
@@ -232,6 +284,9 @@ export default function Home() {
                 activeSubjectId={selectedSubjectId}
                 initialTopicId={selectedTopicIdForTutor}
                 onSubjectChange={setSelectedSubjectId}
+                currentUser={currentUser}
+                completedTopicIds={completedTopicIds}
+                onTopicCompleted={handleTopicCompleted}
               />
             )}
 
