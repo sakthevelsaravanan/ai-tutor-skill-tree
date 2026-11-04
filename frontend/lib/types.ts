@@ -54,6 +54,10 @@ export interface UnlockedTopicItem {
 }
 
 export interface GraphNode {
+  source_file?: string;
+  start_page?: number;
+  end_page?: number;
+  sort_order?: number;
   id: number;
   label: string;
   difficulty_level: number;
@@ -61,6 +65,7 @@ export interface GraphNode {
 }
 
 export interface GraphEdge {
+  basis?: "curated" | "book_order";
   source: number;
   target: number;
   weight: number;

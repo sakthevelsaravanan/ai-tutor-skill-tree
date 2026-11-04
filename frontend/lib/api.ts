@@ -26,8 +26,6 @@ import {
   TutorQueryResponse,
   LearningSession,
   ConversationMessage,
-  RecommendationResponse,
-  SubjectMasteryResponse,
   SessionStage,
   TopicCompletionStatus,
   UserCompletedTopicsResponse,
@@ -69,9 +67,6 @@ export const api = {
   startSession: (userId: number, subjectId: number, topicId?: number) => request<{session_id: string}>("/api/sessions/start", {method: "POST", body: JSON.stringify({user_id: userId, subject_id: subjectId, current_topic_id: topicId})}),
   getSessions: (userId: number, subjectId: number) => request<Array<{session_id: string}>>(`/api/sessions/user/${userId}?subject_id=${subjectId}`),
   getSession: (id: string) => request<{current_topic_id: number; messages: Array<{log_id: number; role: "user" | "assistant"; content: string; created_at: string}>}>(`/api/sessions/${id}`),
-  assess: (sessionId: string, topicId: number, mcq: number, check: number, verdict: string) => request<{mastery_status: string; next_stage: string}>("/api/sessions/quiz-attempt", {method: "POST", body: JSON.stringify({session_id: sessionId, topic_id: topicId, mcq_score: mcq, check_score: check, verdict})}),
-  mastery: (userId: number, subjectId: number) => request<{mastery_percentage: number; topics: Array<{topic_id: number; topic_name: string; mastery_status: string; total_attempts: number}>}>(`/api/sessions/mastery/${userId}/${subjectId}`),
-  recommendation: (userId: number, subjectId: number) => request<{recommended_topic_id: number | null; recommendation_reason: string; topic: Topic | null}>(`/api/sessions/recommend/${userId}/${subjectId}`),
 
   getRoles: () => request<RolesPermissions>("/api/auth/roles"),
   getUsers: () => request<User[]>("/api/auth/users"),
@@ -100,8 +95,8 @@ export const api = {
   getCollections: () => request<CollectionItem[]>("/api/vector/collections"),
   getCollectionStats: (subjectKey: string) =>
     request<CollectionStats>(`/api/vector/stats/${subjectKey}`),
-  getChunks: (subjectKey: string) =>
-    request<VectorChunk[]>(`/api/vector/chunks/${subjectKey}`),
+  getChunks: (subjectKey: string, offset: number = 0, limit: number = 200) =>
+    request<VectorChunk[]>(`/api/vector/chunks/${subjectKey}?offset=${offset}&limit=${limit}`),
   searchVectors: (subjectKey: string, query: string, topK: number = 4) =>
     request<{ subject: string; query: string; total_results: number; results: VectorSearchResult[] }>(
       "/api/vector/search",
@@ -215,12 +210,6 @@ export const api = {
         topic_id: topicId,
       }),
     }),
-
-  getRecommendedTopic: (userId: number, subjectId: number) =>
-    request<RecommendationResponse>(`/api/sessions/recommend/${userId}/${subjectId}`),
-
-  getSubjectMastery: (userId: number, subjectId: number) =>
-    request<SubjectMasteryResponse>(`/api/sessions/mastery/${userId}/${subjectId}`),
 
   getUserSessions: (userId: number) =>
     request<LearningSession[]>(`/api/sessions/user/${userId}`),

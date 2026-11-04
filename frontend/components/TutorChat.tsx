@@ -28,7 +28,6 @@ import {
   X,
 } from "lucide-react";
 import katex from "katex";
-import { MasteryPanel } from "@/components/MasteryPanel";
 
 interface TutorChatProps {
   subjects: Subject[];
@@ -274,7 +273,7 @@ export function TutorChat({
   const getCleanTopicTitle = (topicName?: string) => {
     if (!topicName) return "this concept";
     return topicName
-      .replace(/^\d+[\s_-]*/, "")
+      .replace(/^\d+[.\s_-]*/, "")
       .replace(/^Part\s*\d+:\s*/i, "")
       .replace(/[_\-]+/g, " ")
       .trim();
@@ -284,30 +283,19 @@ export function TutorChat({
 
   // Topic specific suggestions
   const suggestions = [
-    `Explain the fundamental mechanisms and invariants of ${cleanTopicTitle}.`,
+    `Explain ${cleanTopicTitle} in simple terms.`,
     `What are the prerequisite concepts required to understand ${cleanTopicTitle}?`,
-    `How does ${cleanTopicTitle} handle core operations and edge cases?`,
+    `Show me a worked example from ${cleanTopicTitle}.`,
   ];
 
   return (
-    <div className="w-full max-w-5xl mx-auto flex flex-col h-[calc(100vh-8rem)] min-h-[640px] rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
+    <div className="tutor-panel w-full min-w-0 min-h-0 flex-1 flex flex-col rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/60 px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-zinc-400 whitespace-nowrap">Domain:</span>
-            <div className="w-48 sm:w-60">
-              <CustomDropdown
-                value={String(activeSubjectId)}
-                onChange={(val) => handleDomainChange(Number(val))}
-                options={subjects.map((s) => ({ value: String(s.subject_id), label: s.subject_name }))}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-zinc-400 whitespace-nowrap">Active Concept:</span>
-            <div className="w-56 sm:w-72">
+            <span className="text-xs font-semibold text-zinc-400 whitespace-nowrap">Chapter:</span>
+            <div className="w-44 sm:w-72">
               <CustomDropdown
                 value={String(selectedTopicId || (currentTopic ? currentTopic.topic_id : ""))}
                 onChange={(val) => setSelectedTopicId(Number(val))}
@@ -326,8 +314,8 @@ export function TutorChat({
               onChange={(e) => setUsePrereqFilter(e.target.checked)}
               className="rounded bg-zinc-900 border-zinc-700 text-orange-500 focus:ring-0"
             />
-            <span className="hidden sm:inline">Relational Prerequisite Filter</span>
-            <span className="sm:hidden">Prereq Filter</span>
+            <span className="hidden sm:inline">Include earlier chapters</span>
+            <span className="sm:hidden">Earlier chapters</span>
           </label>
 
           {messages.length > 0 && (
@@ -342,9 +330,9 @@ export function TutorChat({
       </div>
 
       {/* Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-5">
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 text-zinc-400">
+          <div className="flex min-h-full flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 text-zinc-400">
             <div className="h-10 w-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-200 border border-zinc-800">
               <Bot className="h-5 w-5" />
             </div>
@@ -353,7 +341,7 @@ export function TutorChat({
                 Socratic AI STEM Tutor
               </h3>
               <p className="text-xs text-zinc-500 leading-relaxed">
-                Grounded in your textbook embeddings (ChromaDB) and guided by the relational prerequisite DAG (PostgreSQL CTE).
+                Ask questions about your course materials, explore examples, and track your understanding.
               </p>
             </div>
 
@@ -420,9 +408,8 @@ export function TutorChat({
       </div>
 
       {sessionError && <p role="alert" className="px-4 text-red-400 text-sm">{sessionError}</p>}
-      <MasteryPanel userId={currentUser.user_id} subjectId={activeSubjectId} topicId={selectedTopicId} ensureSession={ensureSession} onSelectTopic={setSelectedTopicId} disabled={historyLoading || loading}/>
       {/* Input Composer & Topic Completion Area */}
-      <div className="p-3 border-t border-zinc-800 bg-zinc-900/50 space-y-2">
+      <div className="shrink-0 p-3 border-t border-zinc-800 bg-zinc-900/50 space-y-2">
         {/* Completion Toast Notification */}
         {completionToast && (
           <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-emerald-950/70 border border-emerald-500/60 text-xs text-emerald-300 animate-in fade-in duration-200 shadow-sm">
@@ -473,7 +460,7 @@ export function TutorChat({
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Ask a question about ${cleanTopicTitle || "the curriculum"}...`}
             disabled={loading || historyLoading}
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+            className="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
           />
 
           {/* Clearly Visible Done Button Beside Composer */}
