@@ -14,6 +14,5 @@ class Settings(BaseSettings):
     JWT_SECRET: str
     COOKIE_SECURE: bool = False
     GROQ_API_KEY: str = ''
-    MAX_UPLOAD_BYTES: int = 20 * 1024 * 1024
 
 settings = Settings()

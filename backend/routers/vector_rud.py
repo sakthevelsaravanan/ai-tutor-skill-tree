@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Q
 from pydantic import BaseModel, Field
 import hashlib
 import re
-from backend.config import settings
 from backend.database import execute_one, execute_query
 from backend.security import current_user, require_admin, require_instructor
 from backend.vector_service import vector_service
@@ -64,9 +63,9 @@ def add_vector_chunk(req:AddChunkRequest,user=Depends(require_admin)):
     return {'status':'success','chunk_id':req.chunk_id,'message':'Chunk added.'}
 
 @router.get('/chunks/{subject_key}')
-def list_subject_chunks(subject_key:str,limit:int=Query(200,ge=1,le=1000),user=Depends(require_admin)):
+def list_subject_chunks(subject_key:str,limit:int=Query(200,ge=1,le=1000),offset:int=Query(0,ge=0),user=Depends(require_admin)):
     subject_for(subject_key)
-    return vector_service.get_chunks(subject_key,limit)
+    return vector_service.get_chunks(subject_key,limit,offset)
 
 @router.post('/search')
 def search_vectors(req:SearchRequest):
@@ -129,8 +128,6 @@ async def upload_and_index_document(file:UploadFile=File(...),subject_id:Optiona
     user=Depends(require_instructor)):
     name=file.filename or ''
     if not name.lower().endswith(('.pdf','.txt','.md')): raise HTTPException(400,'Supported formats: PDF, TXT, MD.')
-    data=await file.read(settings.MAX_UPLOAD_BYTES+1)
-    if len(data)>settings.MAX_UPLOAD_BYTES: raise HTTPException(413,'Maximum document size is 20 MB.')
     if subject_id is not None:
         subject=execute_one('SELECT * FROM subjects WHERE subject_id=%s',(subject_id,))
         if not subject: raise HTTPException(404,'Course not found.')
@@ -146,7 +143,7 @@ async def upload_and_index_document(file:UploadFile=File(...),subject_id:Optiona
             key=slug+'_'+hashlib.sha256(title.casefold().encode()).hexdigest()[:8]
     # Extraction/embedding is blocking work; keep it off the ASGI event loop.
     from starlette.concurrency import run_in_threadpool
-    result=await run_in_threadpool(pdf_indexer.process_and_index_document,data,name,subject_id,key,
+    result=await run_in_threadpool(pdf_indexer.process_and_index_document,file.file,name,subject_id,key,
                                   user['user_id'],topic_id,title,classification)
     return {'status':'success',**result}
 

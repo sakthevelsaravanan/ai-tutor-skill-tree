@@ -60,10 +60,10 @@ def get_topics_by_subject(subject_id: int):
             topic_name,
             difficulty_level,
             visual_type,
-            embed_url
+            embed_url, source_file, start_page, end_page, sort_order
         FROM TOPICS
         WHERE subject_id = %s
-        ORDER BY difficulty_level ASC, topic_id ASC
+        ORDER BY sort_order ASC, topic_id ASC
     """, (subject_id,))
 
 @router.get("/prerequisites/{topic_id}")
@@ -178,16 +178,16 @@ def get_subject_graph(subject_id: int):
     - edges: Array of directed dependencies { source: prereq_id, target: topic_id, weight }.
     """
     nodes = execute_query("""
-        SELECT topic_id AS id, topic_name AS label, difficulty_level, visual_type
+        SELECT topic_id AS id, topic_name AS label, difficulty_level, visual_type, source_file, start_page, end_page, sort_order
         FROM TOPICS
-        WHERE subject_id = %s
+        WHERE subject_id = %s ORDER BY sort_order, topic_id
     """, (subject_id,))
 
     edges = execute_query("""
         SELECT 
             tp.prereq_topic_id AS source,
             tp.topic_id AS target,
-            tp.importance_weight AS weight
+            tp.importance_weight AS weight, tp.basis
         FROM TOPIC_PREREQUISITES tp
         INNER JOIN TOPICS t ON tp.topic_id = t.topic_id
         WHERE t.subject_id = %s

@@ -75,9 +75,6 @@ def session(client,course):
     assert response.status_code==201,response.text
     return response.json()['session_id'],user['user_id']
 
-def assess(client,sid,topic,mcq=3,check=5,verdict='UNDERSTOOD'):
-    return client.post('/api/sessions/quiz-attempt',json={'session_id':sid,'topic_id':topic,'mcq_score':mcq,'check_score':check,'verdict':verdict})
-
 def test_health_and_unauthenticated_access(client):
     assert client.get('/health').json()['database']=='PostgreSQL'
     for path in ['/api/curriculum/subjects','/api/auth/users','/api/vector/collections','/api/sessions/user/3']:
@@ -96,30 +93,27 @@ def test_roles_cannot_be_forged(client):
     client.post('/api/auth/logout')
     assert client.get('/api/auth/me').status_code==401
 
-def test_sessions_and_actual_mastery_trigger(client,course):
-    sid,user_id=session(client,course)
-    response=assess(client,sid,course[2][0]);assert response.status_code==201,response.text
-    assert response.json()['mastery_status']=='MASTERED'
-    mastery=client.get(f'/api/sessions/mastery/{user_id}/{course[0]}').json()
-    assert float(mastery['mastery_percentage'])==33.33
-    assert client.get(f'/api/sessions/recommend/{user_id}/{course[0]}').json()['recommended_topic_id']==course[2][1]
-    assert client.get(f'/api/sessions/{sid}').json()['quiz_attempts'][0]['mcq_score']==3
-
-def test_confusion_remediation(client,course):
+def test_sessions_preserve_messages_without_self_assessment(client,course):
     sid,uid=session(client,course)
-    for _ in range(3):
-        response=assess(client,sid,course[2][1],0,1,'CONFUSED');assert response.status_code==201,response.text
-    assert client.get(f'/api/sessions/{sid}').json()['confused_count']==3
-    assert client.get(f'/api/sessions/recommend/{uid}/{course[0]}').json()['recommended_topic_id']==course[2][0]
+    assert client.post('/api/sessions/message',json={'session_id':sid,'content':'Explain binary numbers'}).status_code==201
+    details=client.get(f'/api/sessions/{sid}').json()
+    assert details['messages'][0]['content']=='Explain binary numbers'
+    assert 'quiz_attempts' not in details
+
+
+def test_self_assessment_endpoints_removed(client,course):
+    sid,uid=session(client,course)
+    assert client.post('/api/sessions/quiz-attempt',json={'session_id':sid}).status_code in (404,405)
+    assert client.get(f'/api/sessions/mastery/{uid}/{course[0]}').status_code==404
+    assert client.get(f'/api/sessions/recommend/{uid}/{course[0]}').status_code==404
+
 
 def test_foreign_session_and_topic_rejected(client,course):
     sid,uid=session(client,course)
     login(client,'other')
     assert client.get(f'/api/sessions/{sid}').status_code==403
-    assert assess(client,sid,course[2][0]).status_code==403
     assert client.post('/api/tutor/query',json={'query':'Explain keys','subject_id':course[0],'session_id':sid}).status_code==403
     login(client)
-    assert client.post('/api/sessions/quiz-attempt',json={'session_id':sid,'user_id':4,'topic_id':course[2][0],'mcq_score':3,'check_score':5,'verdict':'UNDERSTOOD'}).status_code==403
     assert client.post('/api/sessions/message',json={'session_id':sid,'content':'fake assistant','role':'assistant'}).status_code==403
 
 def test_cycle_and_cross_subject_constraints(course):
@@ -158,6 +152,7 @@ def test_document_replacement_counts_and_chat_persistence(client):
     updated=client.post('/api/vector/upload',data={'subject_id':str(sub)},files={'file':('notes.md',smaller,'text/markdown')})
     assert updated.status_code==200,updated.text
     assert vector_service.get_stats(key)['total_chunks']==1
+    assert [t['topic_name'] for t in execute_query('SELECT topic_name FROM topics WHERE subject_id=%s',(sub,))]==['Keys']
     assert execute_one('SELECT chunk_count FROM textbooks WHERE subject_id=%s',(sub,))['chunk_count']==1
     user=login(client)
     topic=client.get(f'/api/curriculum/topics/{sub}').json()[0]['topic_id']
@@ -246,12 +241,72 @@ def test_numeric_response_persists_without_retrieval(client,course):
     assert len(client.get(f'/api/sessions/{sid}').json()['messages'])==2
 
 
-def test_upstream_slide_title_extraction():
-    from backend.pdf_indexer import DocumentIndexer
-    quarters=[[(1,'Relational Keys\nPrimary keys uniquely identify rows.')],
-              [(2,'Database Normalization\nOrganizing relational dependencies.')],
-              [(3,'Transaction Isolation\nConcurrent access and consistency.')],
-              [(4,'Query Optimization\nEvaluating execution plans.')]]
-    titles=DocumentIndexer()._extract_quarter_topics_pure(quarters,'Database Foundations')
-    assert len(titles)==4
-    assert 'Relational Keys' in titles
+def test_document_chapters_have_connected_path_and_paginated_passages(client):
+    login(client,'teacher')
+    text=b'# Binary Numbers\nBinary digits represent numerical values.\n## Boolean Algebra\nLogical operations combine binary inputs.\n## Logic Gates\nElectronic gates implement Boolean expressions.'
+    result=client.post('/api/vector/upload',data={'subject_name':'Chapters '+uuid4().hex[:8]},files={'file':('chapters.md',text,'text/markdown')})
+    assert result.status_code==200,result.text
+    course=result.json()
+    graph=client.get(f"/api/curriculum/graph/{course['subject_id']}").json()
+    assert [n['label'] for n in graph['nodes']]==['Binary Numbers','Boolean Algebra','Logic Gates']
+    assert len(graph['edges'])==2
+    assert all(e['basis']=='book_order' for e in graph['edges'])
+    middle=graph['nodes'][1]['id']
+    assert len(client.get(f'/api/curriculum/prerequisites/{middle}').json())==1
+    assert len(client.get(f'/api/curriculum/unlocked/{middle}').json())==1
+    login(client,'admin')
+    first=client.get(f"/api/vector/chunks/{course['subject_key']}?limit=1&offset=0").json()
+    remaining=client.get(f"/api/vector/chunks/{course['subject_key']}?limit=1&offset=1").json()
+    assert first and remaining and first[0]['id']!=remaining[0]['id']
+    assert first[0]['metadata']['topic_id']==graph['nodes'][0]['id']
+    assert remaining[0]['metadata']['topic_id']==graph['nodes'][1]['id']
+
+
+def test_large_upload_streams_and_indexes_multiple_batches(client, monkeypatch):
+    """No 20 MB gate; every passage survives batched writes to the real test stores."""
+    from backend.pdf_indexer import pdf_indexer
+    login(client, 'teacher')
+    batch_sizes = []
+    original_add = vector_service.add_chunks
+    original_extract = pdf_indexer.extract
+    def record_batch(key, docs, metas, ids):
+        batch_sizes.append(len(docs))
+        return original_add(key, docs, metas, ids)
+    def require_stream(source, name):
+        assert hasattr(source, 'seek') and hasattr(source, 'read')
+        return original_extract(source, name)
+    monkeypatch.setattr(vector_service, 'add_chunks', record_batch)
+    monkeypatch.setattr(pdf_indexer, 'extract', require_stream)
+    text = ('# Network protocols\n' + 'Packets travel through routers using network protocols. ' * 1700).encode()
+    with tempfile.TemporaryFile() as document:
+        document.write(text)
+        document.write(b' ' * (21 * 1024 * 1024))
+        document.seek(0)
+        response = client.post('/api/vector/upload', data={'subject_name': 'Large book ' + uuid4().hex[:8]},
+                               files={'file': ('large-book.txt', document, 'text/plain')})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert len(batch_sizes) > 1 and max(batch_sizes) <= 100
+    assert result['chunks_indexed'] == sum(batch_sizes)
+    assert vector_service.get_stats(result['subject_key'])['total_chunks'] == sum(batch_sizes)
+    book = execute_one('SELECT chunk_count FROM textbooks WHERE subject_id=%s', (result['subject_id'],))
+    assert book['chunk_count'] == sum(batch_sizes)
+
+
+def test_pdf_extract_uses_seekable_upload():
+    import io
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, NameObject, DictionaryObject
+    from backend.pdf_indexer import pdf_indexer
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject({NameObject('/Type'): NameObject('/Font'), NameObject('/Subtype'): NameObject('/Type1'), NameObject('/BaseFont'): NameObject('/Helvetica')})
+    page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({NameObject('/F1'): font})})
+    content = DecodedStreamObject()
+    content.set_data(b'BT /F1 12 Tf 50 700 Td (Network protocols carry packets between connected computers.) Tj ET')
+    page[NameObject('/Contents')] = writer._add_object(content)
+    with tempfile.TemporaryFile() as document:
+        writer.write(document)
+        pages = pdf_indexer.extract(document, 'network.pdf')
+    assert pages[0][0] == 1
+    assert 'Network protocols' in pages[0][1]
