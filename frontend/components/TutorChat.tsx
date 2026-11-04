@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Subject, Topic, PrerequisiteItem, VectorSearchResult } from "@/lib/types";
+import { User, Subject, Topic, PrerequisiteItem, VectorSearchResult } from "@/lib/types";
 import { api } from "@/lib/api";
 import { CustomDropdown } from "@/components/CustomDropdown";
 import {
@@ -11,8 +11,10 @@ import {
   ArrowRight,
 } from "lucide-react";
 import katex from "katex";
+import { MasteryPanel } from "@/components/MasteryPanel";
 
 interface TutorChatProps {
+  currentUser: User;
   subjects: Subject[];
   activeSubjectId: number;
   initialTopicId?: number | null;
@@ -35,6 +37,7 @@ interface ChatMessage {
 }
 
 export function TutorChat({
+  currentUser,
   subjects,
   activeSubjectId,
   initialTopicId,
@@ -47,6 +50,28 @@ export function TutorChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [usePrereqFilter, setUsePrereqFilter] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionRef = useRef<Promise<string> | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [sessionError, setSessionError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    api.getSessions(currentUser.user_id, activeSubjectId).then(async sessions => {
+      if (!sessions.length) return;
+      const latest = await api.getSession(sessions[0].session_id);
+      if (cancelled) return;
+      setSessionId(sessions[0].session_id);
+      setMessages(latest.messages.filter(m=>m.role === "user" || m.role === "assistant").map(m=>({id:String(m.log_id),role:m.role,content:m.content,timestamp:new Date(m.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})})));
+    }).catch(e=>{if(!cancelled)setSessionError(e.message);}).finally(()=>{if(!cancelled)setHistoryLoading(false);});
+    return ()=>{cancelled=true;};
+  }, [currentUser.user_id, activeSubjectId]);
+  const ensureSession = async () => {
+    if (sessionError) throw new Error(sessionError);
+    if (sessionId) return sessionId;
+    if (!sessionRef.current) sessionRef.current = api.startSession(currentUser.user_id,activeSubjectId,selectedTopicId || undefined).then(s=>{setSessionId(s.session_id);return s.session_id;}).catch(e=>{sessionRef.current=null;throw e;});
+    return sessionRef.current;
+  };
 
   // Sync topics when activeSubjectId changes
   useEffect(() => {
@@ -94,7 +119,7 @@ export function TutorChat({
 
   const handleSendMessage = async (customQuery?: string) => {
     const textToSend = customQuery || query;
-    if (!textToSend.trim() || loading) return;
+    if (!textToSend.trim() || loading || historyLoading) return;
 
     const userMsgId = `user_${Date.now()}`;
     const userMsg: ChatMessage = {
@@ -109,7 +134,9 @@ export function TutorChat({
     setLoading(true);
 
     try {
+      const activeSessionId = await ensureSession();
       const res = await api.queryTutor({
+        session_id: activeSessionId,
         query: textToSend.trim(),
         subject_id: activeSubjectId,
         topic_id: selectedTopicId || (currentTopic ? currentTopic.topic_id : undefined),
@@ -228,7 +255,7 @@ export function TutorChat({
                 Socratic AI STEM Tutor
               </h3>
               <p className="text-xs text-zinc-500 leading-relaxed">
-                Grounded in your textbook embeddings (ChromaDB) and guided by the relational prerequisite DAG (MySQL 8.0 CTE).
+                Grounded in your textbook embeddings (ChromaDB) and guided by the relational prerequisite DAG (PostgreSQL CTE).
               </p>
             </div>
 
@@ -303,6 +330,8 @@ export function TutorChat({
         <div ref={messagesEndRef} />
       </div>
 
+      {sessionError && <p role="alert" className="px-4 text-red-400 text-sm">{sessionError}</p>}
+      <MasteryPanel userId={currentUser.user_id} subjectId={activeSubjectId} topicId={selectedTopicId} ensureSession={ensureSession} onSelectTopic={setSelectedTopicId} disabled={historyLoading || loading}/>
       {/* Input Composer */}
       <div className="p-3 border-t border-zinc-800 bg-zinc-900/50">
         <form
@@ -317,12 +346,12 @@ export function TutorChat({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Ask a question about ${cleanTopicTitle || "the curriculum"}...`}
-            disabled={loading}
+            disabled={loading || historyLoading}
             className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={!query.trim() || loading}
+            disabled={!query.trim() || loading || historyLoading}
             className="flex items-center justify-center h-9 w-9 rounded-lg bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-30 disabled:hover:bg-orange-500 transition-all shrink-0 active:scale-95 shadow-sm shadow-orange-500/20"
           >
             <Send className="h-3.5 w-3.5" />

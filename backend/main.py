@@ -1,46 +1,39 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+"""PostgreSQL-backed tutor service; frontend proxies /api to this local API."""
+from contextlib import asynccontextmanager
+import logging
+import psycopg
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from backend.database import execute_one
+from backend.vector_service import vector_service
+from backend.vector_transactions import recover_pending_writes
 from backend.routers import auth, curriculum, vector_rud, tutor, sessions
 
-app = FastAPI(
-    title="AI Tutor & Skill Tree API",
-    description="Backend API combining MySQL 8.0+ relational core with ChromaDB vector store and adaptive learning sessions.",
-    version="1.0.0"
-)
+@asynccontextmanager
+async def lifespan(app):
+    await run_in_threadpool(recover_pending_writes)
+    yield
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app=FastAPI(title='AI Tutor - PostgreSQL & ChromaDB',version='2.0.0',lifespan=lifespan)
+for router in (auth.router,curriculum.router,vector_rud.router,tutor.router,sessions.router):
+    app.include_router(router)
 
-app.include_router(auth.router)
-app.include_router(curriculum.router)
-app.include_router(vector_rud.router)
-app.include_router(tutor.router)
-app.include_router(sessions.router)
+@app.exception_handler(psycopg.Error)
+async def database_error(request:Request,exc:psycopg.Error):
+    logging.getLogger(__name__).error('Database operation failed: %s',type(exc).__name__)
+    return JSONResponse(status_code=503,content={'detail':'Database operation failed. Please retry or contact the administrator.'})
 
-@app.get("/")
+@app.get('/')
 def root():
-    return {
-        "status": "online",
-        "service": "AI Tutor & Skill Tree Backend",
-        "endpoints": {
-            "docs": "/docs",
-            "auth": "/api/auth",
-            "curriculum": "/api/curriculum",
-            "vector_rud": "/api/vector",
-            "tutor": "/api/tutor",
-            "sessions": "/api/sessions"
-        }
-    }
+    return {'status':'online','service':'AI Tutor','database':'PostgreSQL','docs':'/docs'}
 
-@app.get("/health")
+@app.get('/health')
+@app.get('/api/health')
 def health_check():
-    return {"status": "healthy"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    try:
+        db=execute_one('SELECT current_database() AS name,version() AS version')
+        vector_service.client.heartbeat()
+        return {'status':'healthy','database':'PostgreSQL','database_name':db['name'],'vectors':'ChromaDB'}
+    except Exception:
+        raise HTTPException(503,'PostgreSQL or ChromaDB is unavailable.')

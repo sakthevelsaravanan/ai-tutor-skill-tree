@@ -1,263 +1,31 @@
 "use client";
-
-import React, { useEffect, useState } from "react";
-import { User, Subject, Topic, RolesPermissions } from "@/lib/types";
-import { api } from "@/lib/api";
-import { Navbar } from "@/components/Navbar";
-import { SkillTreeDag } from "@/components/SkillTreeDag";
-import { TutorChat } from "@/components/TutorChat";
-import { DocumentUpload } from "@/components/DocumentUpload";
-import { VectorStoreManager } from "@/components/VectorStoreManager";
-import { RoleSwitcherModal } from "@/components/RoleSwitcher";
-import { X, Sparkles, RefreshCw } from "lucide-react";
-
+import {useEffect,useState} from "react";
+import {User,Subject} from "@/lib/types";
+import {api} from "@/lib/api";
+import {Navbar} from "@/components/Navbar";
+import {Login} from "@/components/Login";
+import {SkillTreeDag} from "@/components/SkillTreeDag";
+import {TutorChat} from "@/components/TutorChat";
+import {DocumentUpload} from "@/components/DocumentUpload";
+import {VectorStoreManager} from "@/components/VectorStoreManager";
 export default function Home() {
-  const [currentUser, setCurrentUser] = useState<User>({
-    user_id: 1,
-    full_name: "Dr. Alan Turing",
-    email: "turing@aitutor.edu",
-    role: "instructor",
-  });
-
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [rolesData, setRolesData] = useState<RolesPermissions | null>(null);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [selectedSubjectId, setSelectedSubjectId] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  // Workflow: Blank/clean Document Ingestion first until user explicitly inputs a document
-  const [hasDocument, setHasDocument] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"upload" | "skilltree" | "tutor" | "vectors">("upload");
-
-  // Selection states
-  const [selectedTopicIdForTutor, setSelectedTopicIdForTutor] = useState<number | null>(null);
-  const [isRoleModalOpen, setIsRoleModalOpen] = useState<boolean>(false);
-
-  useEffect(() => {
-    async function initData() {
-      setLoading(true);
-      try {
-        const [usersRes, rolesRes, subjectsRes] = await Promise.all([
-          api.getUsers().catch(() => []),
-          api.getRoles().catch(() => null),
-          api.getSubjects().catch(() => []),
-        ]);
-
-        setAllUsers(usersRes);
-        setRolesData(rolesRes);
-        setSubjects(subjectsRes);
-
-        if (subjectsRes.length > 0) {
-          const mech = subjectsRes.find((s) => s.subject_key === "mechanical");
-          const bigData = subjectsRes.find((s) => s.subject_key === "big_data");
-          const defaultSub = mech || bigData || subjectsRes[subjectsRes.length - 1];
-          setSelectedSubjectId(defaultSub.subject_id);
-          setHasDocument(true);
-        }
-
-        if (usersRes.length > 0) {
-          const defaultUser = usersRes.find((u) => u.role === "instructor") || usersRes[0];
-          setCurrentUser(defaultUser);
-        }
-      } catch (err) {
-        console.error("Initialization error:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    initData();
-  }, []);
-
-  useEffect(() => {
-    if (currentUser.role !== "admin" && activeTab === "vectors") {
-      setActiveTab("upload");
-    }
-  }, [currentUser.role, activeTab]);
-
-  const handle1ClickSwitchRole = () => {
-    const roleCycle: Record<string, "student" | "instructor" | "admin"> = {
-      student: "instructor",
-      instructor: "admin",
-      admin: "student",
-    };
-    const nextRole = roleCycle[currentUser.role] || "student";
-    const matchingUser = allUsers.find((u) => u.role === nextRole);
-    if (matchingUser) {
-      setCurrentUser(matchingUser);
-    } else {
-      const defaults = {
-        student: { user_id: 3, full_name: "Roshan Kumar", email: "roshan@student.edu" },
-        instructor: { user_id: 1, full_name: "Dr. Alan Turing", email: "turing@aitutor.edu" },
-        admin: { user_id: 6, full_name: "Ada Lovelace", email: "admin@aitutor.edu" },
-      };
-      setCurrentUser({
-        ...defaults[nextRole],
-        role: nextRole,
-      });
-    }
-  };
-
-  const handleSelectTopicForTutor = (topicId: number) => {
-    setSelectedTopicIdForTutor(topicId);
-    setActiveTab("tutor");
-  };
-
-  const handleSubjectCreated = async (newSubject: Subject) => {
-    setSubjects((prev) => {
-      const exists = prev.find((s) => s.subject_id === newSubject.subject_id);
-      if (exists) return prev;
-      return [...prev, newSubject];
-    });
-    setSelectedSubjectId(newSubject.subject_id);
-    setHasDocument(true);
-    try {
-      const fresh = await api.getSubjects();
-      if (fresh.length > 0) {
-        setSubjects(fresh);
-      }
-    } catch (e) {
-      console.error("Could not sync fresh subjects:", e);
-    }
-  };
-
-  const handleDeleteSubject = (deletedSubjectId: number) => {
-    setSubjects((prev) => {
-      const remaining = prev.filter((s) => s.subject_id !== deletedSubjectId);
-      const indexed = remaining.filter((s) => s.is_indexed);
-      if (indexed.length === 0) {
-        setHasDocument(false);
-        setSelectedSubjectId(0);
-        setActiveTab("upload");
-      } else if (selectedSubjectId === deletedSubjectId) {
-        setSelectedSubjectId(indexed[0].subject_id);
-      }
-      return remaining;
-    });
-  };
-
-  const handleCoursesPurged = async () => {
-    try {
-      const fresh = await api.getSubjects();
-      setSubjects(fresh);
-      const indexed = fresh.filter((s) => s.is_indexed);
-      if (indexed.length === 0) {
-        setHasDocument(false);
-        setSelectedSubjectId(0);
-        setActiveTab("upload");
-      } else {
-        setSelectedSubjectId(indexed[0].subject_id);
-      }
-    } catch {
-      setSubjects([]);
-      setHasDocument(false);
-      setSelectedSubjectId(0);
-      setActiveTab("upload");
-    }
-  };
-
-  const activeSubject = subjects.find((s) => s.subject_id === selectedSubjectId) || subjects[0] || {
-    subject_id: 0,
-    subject_key: "",
-    subject_name: "No Course Selected",
-    description: "Upload a course document to build your knowledge base.",
-    is_indexed: false,
-    total_topics: 0,
-    total_textbooks: 0,
-  };
-
-  return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {/* Streamlined Minimalist Navbar */}
-      <Navbar
-        currentUser={currentUser}
-        onSwitchRole={handle1ClickSwitchRole}
-        onOpenUserModal={() => setIsRoleModalOpen(true)}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        selectedSubjectName={activeSubject.subject_name}
-        hasDocument={hasDocument}
-      />
-
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6">
-        {loading ? (
-          <div className="flex h-96 flex-col items-center justify-center gap-3 text-zinc-500">
-            <RefreshCw className="h-5 w-5 animate-spin text-orange-400" />
-            <p className="font-mono text-xs text-zinc-400">
-              Connecting to MySQL 8.0 & ChromaDB...
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* TAB 1: DOCUMENT INGESTION (FOCUSED FIRST STEP) */}
-            {activeTab === "upload" && (
-              <DocumentUpload
-                subjects={subjects}
-                activeSubjectId={selectedSubjectId}
-                onSubjectChange={setSelectedSubjectId}
-                onSubjectCreated={handleSubjectCreated}
-                onProceedToSkillTree={() => setActiveTab("skilltree")}
-                onProceedToTutor={() => setActiveTab("tutor")}
-                hasDocument={hasDocument}
-                setHasDocument={setHasDocument}
-                currentUser={currentUser}
-                onDeleteSubject={handleDeleteSubject}
-              />
-            )}
-
-            {/* TAB 2: SKILL TREE (DAG) - UNLOCKED AFTER INGESTION */}
-            {activeTab === "skilltree" && (
-              <SkillTreeDag
-                subject={activeSubject}
-                onSelectTopicForTutor={handleSelectTopicForTutor}
-              />
-            )}
-
-            {/* TAB 3: AI TUTOR CHAT - UNLOCKED AFTER INGESTION */}
-            {activeTab === "tutor" && (
-              <TutorChat
-                subjects={subjects}
-                activeSubjectId={selectedSubjectId}
-                initialTopicId={selectedTopicIdForTutor}
-                onSubjectChange={setSelectedSubjectId}
-              />
-            )}
-
-            {/* TAB 4: VECTOR KNOWLEDGE BASE (RUD) - ADMIN ONLY */}
-            {activeTab === "vectors" && (
-              <VectorStoreManager
-                currentUser={currentUser}
-                onCoursesUpdated={handleCoursesPurged}
-                onSwitchToAdmin={() => {
-                  const adminUser = allUsers.find((u) => u.role === "admin");
-                  if (adminUser) {
-                    setCurrentUser(adminUser);
-                  } else {
-                    setCurrentUser({
-                      user_id: 6,
-                      full_name: "Ada Lovelace",
-                      email: "admin@aitutor.edu",
-                      role: "admin",
-                    });
-                  }
-                }}
-              />
-            )}
-          </>
-        )}
-      </main>
-
-      {/* Role Switcher Modal */}
-      <RoleSwitcherModal
-        isOpen={isRoleModalOpen}
-        onClose={() => setIsRoleModalOpen(false)}
-        currentUser={currentUser}
-        onSelectUser={(u) => {
-          setCurrentUser(u);
-          setIsRoleModalOpen(false);
-        }}
-        allUsers={allUsers}
-        rolesData={rolesData}
-      />
-    </div>
-  );
+ const [user,setUser]=useState<User|null>(null);const [ready,setReady]=useState(false);const [subjects,setSubjects]=useState<Subject[]>([]);
+ const [subjectId,setSubjectId]=useState(0);const [topicId,setTopicId]=useState<number|null>(null);const [error,setError]=useState("");
+ const [activeTab,setActiveTab]=useState<"upload"|"skilltree"|"tutor"|"vectors">("upload");
+ const [hasDocument,setHasDocument]=useState(false);
+ useEffect(()=>{api.me().then(setUser).catch(()=>{}).finally(()=>setReady(true));const expired=()=>setUser(null);window.addEventListener("auth-expired",expired);return()=>window.removeEventListener("auth-expired",expired);},[]);
+ const refresh=async()=>{try{const rows=await api.getSubjects();setSubjects(rows);setHasDocument(rows.some(s=>!!s.is_indexed));setSubjectId(id=>rows.some(s=>s.subject_id===id)?id:(rows[0]?.subject_id||0));setError("");}catch(e:any){setError(e.message);}};
+ useEffect(()=>{if(user){setActiveTab("upload");setTopicId(null);refresh();}else{setSubjects([]);setSubjectId(0);}},[user]);
+ const logout=async()=>{try{await api.logout();setUser(null);}catch(e:any){setError(e.message);}};
+ if(!ready) return <main className="min-h-screen bg-zinc-950 text-zinc-300 grid place-items-center">Loading…</main>;
+ if(!user) return <Login onLogin={setUser}/>;
+ const subject=subjects.find(s=>s.subject_id===subjectId);
+ return <div className="min-h-screen bg-zinc-950 text-zinc-100"><Navbar currentUser={user} onLogout={logout} activeTab={activeTab} setActiveTab={setActiveTab} hasDocument={hasDocument}/>
+ <main className="max-w-7xl mx-auto p-4 sm:p-8 space-y-4">{error&&<p role="alert" className="text-red-400">{error}</p>}
+ {subjects.length>0&&<label className="flex gap-3 items-center text-sm text-zinc-400">Course<select aria-label="Course" value={subjectId} onChange={e=>{setSubjectId(Number(e.target.value));setTopicId(null);}} className="bg-zinc-900 border border-zinc-700 rounded-lg p-2 max-w-full">{subjects.map(s=><option key={s.subject_id} value={s.subject_id}>{s.subject_name}</option>)}</select></label>}
+ {activeTab==="upload"&&(user.role!=="student"?<DocumentUpload subjects={subjects} activeSubjectId={subjectId} onSubjectChange={setSubjectId} onSubjectCreated={s=>{setSubjectId(s.subject_id);refresh();}} onProceedToSkillTree={()=>setActiveTab("skilltree")} onProceedToTutor={()=>setActiveTab("tutor")} hasDocument={hasDocument} setHasDocument={setHasDocument} currentUser={user} onDeleteSubject={()=>refresh()}/>:<section className="rounded-xl border border-zinc-800 bg-zinc-900 p-8 space-y-4"><h1 className="text-2xl font-semibold">Your learning space</h1><p className="text-zinc-400">{subject?"Choose a course above, then explore its concepts or continue with your tutor.":"Your instructor has not uploaded course material yet."}</p>{subject&&<button className="bg-orange-500 rounded-lg px-4 py-2" onClick={()=>setActiveTab("tutor")}>Continue learning</button>}</section>)}
+ {activeTab==="skilltree"&&subject&&<SkillTreeDag key={subjectId} subject={subject} onSelectTopicForTutor={id=>{setTopicId(id);setActiveTab("tutor");}}/>}
+ {activeTab==="tutor"&&subject&&<TutorChat key={`${user.user_id}-${subjectId}`} currentUser={user} subjects={subjects} activeSubjectId={subjectId} initialTopicId={topicId} onSubjectChange={id=>{setSubjectId(id);setTopicId(null);}}/>}
+ {activeTab==="vectors"&&user.role==="admin"&&<VectorStoreManager currentUser={user} onSwitchToAdmin={()=>{}} onCoursesUpdated={refresh}/>}
+ </main></div>;
 }

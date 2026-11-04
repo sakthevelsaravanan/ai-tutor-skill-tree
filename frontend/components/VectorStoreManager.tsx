@@ -280,12 +280,11 @@ export const VectorStoreManager: React.FC<VectorStoreManagerProps> = ({
     setIsUploading(true);
     setActionMessage(null);
     try {
-      const subjectIdMap: Record<string, number> = { dsa: 1, dvlsi: 2, cs: 3, networks: 4 };
+      const subject = (await api.getSubjects()).find(s => s.subject_key === selectedSubject);
+      if (!subject) throw new Error("Select an existing course before uploading.");
       const formData = new FormData();
       formData.append("file", pdfFile);
-      formData.append("subject_id", String(subjectIdMap[selectedSubject] || 1));
-      formData.append("subject_key", selectedSubject);
-      formData.append("uploaded_by", String(currentUser.user_id));
+      formData.append("subject_id", String(subject.subject_id));
 
       const res = await api.uploadPdf(formData);
       setActionMessage({
@@ -333,7 +332,7 @@ export const VectorStoreManager: React.FC<VectorStoreManagerProps> = ({
                 </span>
               </div>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Dense Vector Search • Cosine Similarity • Relational Metadata Tagging
+                Dense Vector Search â€¢ Cosine Similarity â€¢ Relational Metadata Tagging
               </p>
             </div>
           </div>

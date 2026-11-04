@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from backend.security import current_user
 from backend.database import execute_query, execute_one
 
-router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"])
+router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"], dependencies=[Depends(current_user)])
 
 @router.get("/subjects")
 def get_subjects():
@@ -48,7 +49,7 @@ def get_topic_prerequisite_tree(topic_id: int):
                 t_pre.difficulty_level AS prereq_difficulty,
                 tp.importance_weight,
                 1 AS traversal_depth,
-                CAST(t_pre.topic_name AS CHAR(1000)) AS learning_order_path
+                CAST(t_pre.topic_name AS TEXT) AS learning_order_path
             FROM TOPIC_PREREQUISITES tp
             INNER JOIN TOPICS t_pre ON tp.prereq_topic_id = t_pre.topic_id
             WHERE tp.topic_id = %s
@@ -129,9 +130,9 @@ def get_subject_graph(subject_id: int):
 
     edges = execute_query("""
         SELECT 
-            tp.prereq_topic_id AS `source`,
-            tp.topic_id AS `target`,
-            tp.importance_weight AS `weight`
+            tp.prereq_topic_id AS source,
+            tp.topic_id AS target,
+            tp.importance_weight AS weight
         FROM TOPIC_PREREQUISITES tp
         INNER JOIN TOPICS t ON tp.topic_id = t.topic_id
         WHERE t.subject_id = %s

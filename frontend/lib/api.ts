@@ -14,16 +14,13 @@ import {
   TutorQueryResponse,
 } from "./types";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL !== undefined && process.env.NEXT_PUBLIC_API_URL !== ""
-    ? process.env.NEXT_PUBLIC_API_URL
-    : typeof window !== "undefined"
-    ? `http://${window.location.hostname}:8000`
-    : "http://127.0.0.1:8000";
+// Same-origin requests use Next.js rewrites and HttpOnly session cookies.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
   const res = await fetch(url, {
+    credentials: "include",
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -35,10 +32,11 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     let errorDetail = "Request failed";
     try {
       const errJson = await res.json();
-      errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+      errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail || errJson);
     } catch {
       errorDetail = `${res.status} ${res.statusText}`;
     }
+    if (res.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("auth-expired"));
     throw new Error(errorDetail);
   }
 
@@ -46,6 +44,16 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  me: () => request<User>("/api/auth/me"),
+  logout: () => request("/api/auth/logout", { method: "POST" }),
+  health: () => request<{status: string; database: string}>("/api/health"),
+  startSession: (userId: number, subjectId: number, topicId?: number) => request<{session_id: string}>("/api/sessions/start", {method: "POST", body: JSON.stringify({user_id: userId, subject_id: subjectId, current_topic_id: topicId})}),
+  getSessions: (userId: number, subjectId: number) => request<Array<{session_id: string}>>(`/api/sessions/user/${userId}?subject_id=${subjectId}`),
+  getSession: (id: string) => request<{current_topic_id: number; messages: Array<{log_id: number; role: "user" | "assistant"; content: string; created_at: string}>}>(`/api/sessions/${id}`),
+  assess: (sessionId: string, topicId: number, mcq: number, check: number, verdict: string) => request<{mastery_status: string; next_stage: string}>("/api/sessions/quiz-attempt", {method: "POST", body: JSON.stringify({session_id: sessionId, topic_id: topicId, mcq_score: mcq, check_score: check, verdict})}),
+  mastery: (userId: number, subjectId: number) => request<{mastery_percentage: number; topics: Array<{topic_id: number; topic_name: string; mastery_status: string; total_attempts: number}>}>(`/api/sessions/mastery/${userId}/${subjectId}`),
+  recommendation: (userId: number, subjectId: number) => request<{recommended_topic_id: number | null; recommendation_reason: string; topic: Topic | null}>(`/api/sessions/recommend/${userId}/${subjectId}`),
+
   getRoles: () => request<RolesPermissions>("/api/auth/roles"),
   getUsers: () => request<User[]>("/api/auth/users"),
   login: (email: string, password: string) =>
@@ -106,25 +114,26 @@ export const api = {
   clearCollection: (subjectKey: string, role?: string, userId?: number) =>
     request<{ status: string; deleted_count: number; message: string }>("/api/vector/clear-collection", {
       method: "POST",
-      body: JSON.stringify({ subject_key: subjectKey, role: role || "admin", user_id: userId }),
+      body: JSON.stringify({ subject_key: subjectKey }),
     }),
   clearAllVectors: (role?: string, userId?: number) =>
     request<{ status: string; total_chunks_deleted: number; collections_cleared: string[]; message: string }>(
       "/api/vector/clear-all",
       {
         method: "POST",
-        body: JSON.stringify({ role: role || "admin", user_id: userId, confirm: true }),
+        body: JSON.stringify({ confirm: true }),
       }
     ),
   deleteCourse: (subjectId: number, role?: string, userId?: number) =>
     request<{ status: string; deleted_subject_id: number; deleted_subject_name: string; message: string }>(
-      `/api/vector/course/${subjectId}?role=${role || "admin"}&user_id=${userId || 6}`,
+      `/api/vector/course/${subjectId}`,
       { method: "DELETE" }
     ),
   uploadPdf: async (formData: FormData) => {
     const res = await fetch(`${API_BASE}/api/vector/upload`, {
       method: "POST",
       body: formData,
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "Upload failed" }));
@@ -136,6 +145,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/vector/upload`, {
       method: "POST",
       body: formData,
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "Upload failed" }));

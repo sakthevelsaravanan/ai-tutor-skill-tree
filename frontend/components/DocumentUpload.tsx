@@ -118,7 +118,7 @@ export function DocumentUpload({
     formData.append("file", file);
     formData.append("subject_name", courseName.trim());
     formData.append("classification", classification);
-    formData.append("uploaded_by", "1");
+
 
     try {
       const data = await api.uploadDocument(formData);
@@ -147,30 +147,6 @@ export function DocumentUpload({
       setHasDocument(true);
       setFile(null);
     } catch (err: any) {
-      // Auto-recovery: check if backend completed indexing before fetch returned
-      try {
-        const fresh = await api.getSubjects();
-        const match = fresh.find(
-          (s) =>
-            s.subject_name.toLowerCase() === courseName.trim().toLowerCase() ||
-            s.subject_key.toLowerCase() === courseName.trim().toLowerCase()
-        );
-        if (match) {
-          if (onSubjectCreated) onSubjectCreated(match);
-          onSubjectChange(match.subject_id);
-          setHasDocument(true);
-          setResult({
-            subject_id: match.subject_id,
-            subject_name: match.subject_name,
-            file_name: file?.name || "Uploaded Document",
-            pages_parsed: 1,
-            chunks_indexed: match.total_topics || 4,
-            collection: `chroma_${match.subject_key}`,
-          });
-          return;
-        }
-      } catch (_) {}
-
       setError(err.message || "Document indexing and course generation failed.");
     } finally {
       setLoading(false);
@@ -206,7 +182,7 @@ export function DocumentUpload({
           Ingest Course Materials
         </h1>
         <p className="text-xs sm:text-sm text-zinc-400 max-w-lg mx-auto leading-relaxed">
-          Upload any STEM textbook, syllabus, or lecture notes. Name and classify your course—the system dynamically builds the relational skill tree and vectorizes chunks into ChromaDB.
+          Upload any STEM textbook, syllabus, or lecture notes. Name and classify your courseâ€”the system dynamically builds the relational skill tree and vectorizes chunks into ChromaDB.
         </p>
       </div>
 
@@ -221,7 +197,7 @@ export function DocumentUpload({
             <button
               onClick={() => {
                 setResult(null);
-                setHasDocument(false);
+                setHasDocument(subjects.some(s => !!s.is_indexed));
                 setCourseName("");
                 setFile(null);
               }}
@@ -257,7 +233,7 @@ export function DocumentUpload({
               className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white py-3 px-5 text-xs font-semibold transition shadow-md shadow-orange-500/25 active:scale-[0.98]"
             >
               <GitFork className="h-4 w-4" />
-              <span>Step 2: Explore Prerequisite Skill Tree (DAG) →</span>
+              <span>Step 2: Explore Prerequisite Skill Tree (DAG) â†’</span>
             </button>
 
             <button
@@ -265,7 +241,7 @@ export function DocumentUpload({
               className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 py-3 px-5 text-xs font-semibold transition active:scale-[0.98]"
             >
               <MessageSquare className="h-4 w-4 text-orange-400" />
-              <span>Step 3: Launch Socratic AI Tutor Chat →</span>
+              <span>Step 3: Launch Socratic AI Tutor Chat â†’</span>
             </button>
           </div>
         </div>
