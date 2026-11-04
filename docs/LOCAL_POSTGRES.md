@@ -18,7 +18,7 @@ and click **Mark as Done**. The skill tree displays **Completed** for that stude
 Completion is separate from assessment-based mastery; it does not invent a quiz
 score or change mastery percentages.
 
-The included Database Foundations course contains original demo notes. Upload
+Courses are created from your own documents. Upload
 your own PDF, TXT, or Markdown as an instructor or administrator. Without a
 `GROQ_API_KEY`, answers use relevant extracted passages and slide match metadata.
 The deterministic Hill cipher solver does not require a model key or textbook
@@ -81,3 +81,22 @@ test suite. `pytest.ini` selects `backend/tests`.
 This deployment listens only on the local machine. It has not been published to
 public hosting. PostgreSQL data and Chroma persistence must be backed up together;
 the vector write journal supports recovery for this single-host setup.
+
+
+## Large documents and layout
+
+Uploads have no fixed application file-size cap. FastAPI spools large multipart uploads to temporary disk storage and the PDF reader consumes that seekable file. Extracted text is split into 1,000-character passages with 150-character overlap and indexed in batches of at most 100. PostgreSQL counts are committed after indexing; existing recovery restores the prior vectors on failure. Text extraction and transaction snapshots still consume memory, so practical capacity depends on available memory, temporary disk space, and processing time. The local Next.js proxy allows up to one hour for indexing.
+
+The workspace uses fluid width, compact course/upload columns, responsive skill cards, and a viewport-height tutor with a scrolling message area. Phones stack the course form above the library.
+
+To build a fresh frontend while another production build is running, set `NEXT_DIST_DIR=.next-layout` before `npm run build`. Put that directory name in `.runtime/frontend-build-dir` to have `scripts/start.ps1` use it. With no marker the script uses `.next` as usual. Remove the marker when switching back to a standard build.
+
+
+## Document learning paths
+
+The self-assessment panel and its scoring/mastery/recommendation API routes are removed. Legacy database tables remain for historical compatibility. Completion uses the existing simple Done action.
+Courses are selected by opening a library card; the global selector and academic-field input are removed. The knowledge base displays searchable, paginated passages with source pages.
+
+The indexer uses numbered table-of-contents entries with matching chapter starts, then explicit chapter/Markdown headings. If neither is available it uses labeled groups of 20 pages. Topics retain source file and PDF page ranges. Consecutive chapters are linked with `basis=book_order`, visibly labeled as suggested prerequisites rather than verified semantic dependencies.
+
+`scripts/rebuild_course_structure.py` previews a rebuild from stored passages. `--apply` backs up PostgreSQL and affected vector collections under `.runtime/backups` before replacing generated topics and remapping vector metadata. Conversations remain, but old topic-specific completions and assessments are retired with the replaced topics. `--remove-demo` removes only the exact original Database Foundations demo course. No files need to be uploaded again.
