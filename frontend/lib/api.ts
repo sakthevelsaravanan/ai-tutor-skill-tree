@@ -1,3 +1,15 @@
+/**
+ * Frontend HTTP Client & REST API Integration Layer.
+ *
+ * Provides typed asynchronous methods connecting Next.js UI components to the FastAPI backend:
+ * 1. Authentication & RBAC: User login, session profiles, role permission matrix.
+ * 2. Curriculum & Skill Tree: Courses, topics, Recursive CTE ancestor/descendant trees, and DAG graph data.
+ * 3. ChromaDB Vector RUD: Semantic vector search, chunk creation, editing, deletion, and admin collection purge.
+ * 4. Socratic RAG Tutor: Slide-grounded vector queries with relational prerequisite filtering.
+ * 5. Learning Sessions & Mastery: Dialogue turn logging, quiz evaluations, and stored procedure recommendations.
+ * 6. Topic Completion Tracking: Persists and fetches manual student topic completions.
+ */
+
 import {
   Subject,
   Topic,
@@ -12,6 +24,13 @@ import {
   VectorChunk,
   TutorQueryRequest,
   TutorQueryResponse,
+  LearningSession,
+  ConversationMessage,
+  RecommendationResponse,
+  SubjectMasteryResponse,
+  SessionStage,
+  TopicCompletionStatus,
+  UserCompletedTopicsResponse,
 } from "./types";
 
 // Same-origin requests use Next.js rewrites and HttpOnly session cookies.
@@ -158,4 +177,90 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  // ============================================================
+  // Member 2: Learning Session, Quiz & Mastery Client APIs (M2-APP1 & M2-APP2)
+  // ============================================================
+
+  createLearningSession: (
+    userId: number,
+    subjectId: number,
+    currentTopicId?: number | null,
+    quizDifficulty: number = 1
+  ) =>
+    request<LearningSession>("/api/sessions/start", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: userId,
+        subject_id: subjectId,
+        current_topic_id: currentTopicId || undefined,
+        quiz_difficulty: quizDifficulty,
+      }),
+    }),
+
+  saveSessionMessage: (
+    sessionId: string,
+    content: string,
+    role: "user" | "assistant" | "system" = "user",
+    stage?: SessionStage,
+    topicId?: number
+  ) =>
+    request<ConversationMessage>("/api/sessions/message", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        content,
+        role,
+        stage,
+        topic_id: topicId,
+      }),
+    }),
+
+  getRecommendedTopic: (userId: number, subjectId: number) =>
+    request<RecommendationResponse>(`/api/sessions/recommend/${userId}/${subjectId}`),
+
+  getSubjectMastery: (userId: number, subjectId: number) =>
+    request<SubjectMasteryResponse>(`/api/sessions/mastery/${userId}/${subjectId}`),
+
+  getUserSessions: (userId: number) =>
+    request<LearningSession[]>(`/api/sessions/user/${userId}`),
+
+  getSessionDetails: (sessionId: string) =>
+    request<LearningSession>(`/api/sessions/${sessionId}`),
+
+  // ============================================================
+  // Topic Completion Tracking APIs
+  // ============================================================
+
+  markTopicComplete: (topicId: number, userId: number) =>
+    request<{
+      status: string;
+      message: string;
+      topic_id: number;
+      user_id: number;
+      is_completed: boolean;
+      completed_at?: string;
+    }>(`/api/curriculum/topics/${topicId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+
+  unmarkTopicComplete: (topicId: number, userId: number) =>
+    request<{
+      status: string;
+      message: string;
+      topic_id: number;
+      user_id: number;
+      is_completed: boolean;
+    }>(`/api/curriculum/topics/${topicId}/complete?user_id=${userId}`, {
+      method: "DELETE",
+    }),
+
+  getCompletedTopics: (userId: number, subjectId?: number) => {
+    const q = subjectId !== undefined && subjectId !== null ? `?subject_id=${subjectId}` : "";
+    return request<UserCompletedTopicsResponse>(`/api/curriculum/completed/${userId}${q}`);
+  },
+
+  getTopicCompletionStatus: (topicId: number, userId: number) =>
+    request<TopicCompletionStatus>(`/api/curriculum/topics/${topicId}/status/${userId}`),
 };

@@ -1,4 +1,12 @@
 # AI Tutor & Skill Tree
+
+> **Current local stack:** PostgreSQL 18 + ChromaDB + FastAPI + Next.js.
+> The local integration includes the latest `feat/topic-completion-tracking`
+> changes with authenticated student ownership and persistent completion badges.
+> See [Local PostgreSQL setup and verification](docs/LOCAL_POSTGRES.md) for the
+> active startup commands, schema, tests, and account instructions. The original
+> MySQL-oriented project specification below is retained for historical context.
+
 ### Adaptive Socratic Tutoring System Powered by Polyglot Relational DAGs and Dense Vector Retrieval
 
 > **PES University — Department of Computer Science and Engineering**  

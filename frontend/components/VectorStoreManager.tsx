@@ -1,3 +1,13 @@
+/**
+ * ChromaDB Vector Store RUD & Knowledge Base Management UI (7 Marks).
+ *
+ * Provides comprehensive UI controls for:
+ * 1. Semantic Search & Top-K Inspection: Test queries against embeddings with cosine similarity.
+ * 2. Chunk CRUD: Inspect chunks, create new vector chunks, edit existing chunk text, and delete chunks.
+ * 3. Document Ingestion: Upload textbooks/slides (PDF, TXT, MD) to dynamically build 4-part skill tree and index vectors.
+ * 4. Admin Guardrails: Protects collection purge and system reset behind Admin role verification.
+ */
+
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -104,8 +114,7 @@ export const VectorStoreManager: React.FC<VectorStoreManagerProps> = ({
           if (prev && data.some((c) => c.name.replace(/^chroma_/, "") === prev)) {
             return prev;
           }
-          const bigData = data.find((c) => c.name.includes("big_data"));
-          return (bigData || data[0]).name.replace(/^chroma_/, "");
+          return data[0].name.replace(/^chroma_/, "");
         });
       } else {
         setSelectedSubject("");

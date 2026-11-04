@@ -9,6 +9,8 @@ This directory contains the complete MySQL 8.0+ relational implementation for th
 > [!IMPORTANT]
 > `01_curriculum_rbac_recursive.sql` (Member 1) **must** be executed before `02_sessions_triggers_procedures.sql` (Member 2). The session and mastery tables in script 2 depend on foreign keys (`USERS`, `SUBJECTS`, `TOPICS`) defined in script 1.
 
+`03_topic_completion_tracking.sql` adds the independent manual completion table. Run it after scripts 01 and 02 on an existing MySQL database; it does not alter mastery or quiz data.
+
 ### Option A: Using MySQL Command Line Client / PowerShell
 
 ```powershell
@@ -17,6 +19,9 @@ Get-Content database/01_curriculum_rbac_recursive.sql | & "C:\Program Files\MySQ
 
 # Step 2: Run Member 2's script (Creates 4 session/mastery tables, triggers, stored procedures, functions, correlated queries)
 Get-Content database/02_sessions_triggers_procedures.sql | & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p
+
+# Step 3: Run the manual topic completion migration
+Get-Content database/03_topic_completion_tracking.sql | & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p
 ```
 
 ### Option B: Using MySQL Workbench

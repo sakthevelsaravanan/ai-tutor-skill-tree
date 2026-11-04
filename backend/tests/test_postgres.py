@@ -15,7 +15,7 @@ from backend.security import hash_password
 from backend.main import app
 from backend.vector_transactions import vector_transaction,JOURNAL,recover_pending_writes
 from backend.vector_service import vector_service
-from backend.routers.tutor import solve_hill_cipher,_generate_socratic_response
+from backend.routers.tutor import solve_hill_cipher,parse_hill_cipher_problem,_synthesize_slide_rag_answer
 from fastapi.testclient import TestClient
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -141,11 +141,11 @@ def test_quiz_rollback_is_atomic(client,course):
     assert execute_one('SELECT count(*) AS n FROM student_topic_mastery WHERE user_id=%s AND topic_id=%s',(uid,course[2][0]))['n']==0
 
 def test_grounded_fallback_and_numeric_without_vectors():
-    answer=_generate_socratic_response('encrypt plaintext ACT using Hill cipher [[6,24,1],[13,16,10],[20,17,15]]','Hill cipher',[],[],None,None)[0]
+    answer=solve_hill_cipher(parse_hill_cipher_problem('encrypt plaintext ACT using Hill cipher [[6,24,1],[13,16,10],[20,17,15]]'))[0]
     assert 'POH' in answer
     text,_=solve_hill_cipher({'matrix':[[6,24,1],[13,16,10],[20,17,15]],'n':3,'text':'POH','operation':'decrypt'})
     assert 'ACT' in text
-    assert 'sufficient information' in _generate_socratic_response('What are keys?','Keys',[],[],None,None)[0]
+    assert 'No direct matching topics' in _synthesize_slide_rag_answer('What are keys?',[],'Database foundations','Keys')
 
 def test_document_replacement_counts_and_chat_persistence(client):
     login(client,'teacher')
@@ -194,3 +194,64 @@ def test_invalid_document_does_not_leave_subject(client):
     response=client.post('/api/vector/upload',data={'subject_name':name},files={'file':('empty.txt',b'','text/plain')})
     assert response.status_code==422
     assert not execute_one('SELECT 1 FROM subjects WHERE subject_name=%s',(name,))
+
+
+def test_completion_persists_and_duplicate_is_idempotent(client,course):
+    user=login(client)
+    topic=course[2][0]
+    url=f'/api/curriculum/topics/{topic}/complete'
+    response=client.post(url,json={'user_id':user['user_id']})
+    assert response.status_code==200,response.text
+    first=response.json()
+    assert first['is_completed']
+    repeated=client.post(url,json={'user_id':user['user_id']})
+    assert 'already' in repeated.json()['message']
+    assert repeated.json()['completed_at']==first['completed_at']
+    assert execute_one('SELECT count(*) AS n FROM student_topic_completions WHERE user_id=%s AND topic_id=%s',(user['user_id'],topic))['n']==1
+    # A fresh login reads the same persisted status; completion does not fabricate quiz mastery.
+    client.post('/api/auth/logout')
+    login(client)
+    status=client.get(f'/api/curriculum/topics/{topic}/status/{user["user_id"]}').json()
+    assert status['is_completed']
+    assert client.get(f'/api/curriculum/completed/{user["user_id"]}?subject_id={course[0]}').json()['completed_topic_ids']==[topic]
+    assert not execute_one('SELECT 1 FROM student_topic_mastery WHERE user_id=%s AND topic_id=%s',(user['user_id'],topic))
+    assert client.delete(url,params={'user_id':user['user_id']}).status_code==200
+    assert not client.get(f'/api/curriculum/topics/{topic}/status/{user["user_id"]}').json()['is_completed']
+
+
+def test_completion_cannot_access_another_student(client,course):
+    user=login(client)
+    topic=course[2][0]
+    client.post(f'/api/curriculum/topics/{topic}/complete',json={'user_id':user['user_id']})
+    login(client,'other')
+    assert client.post(f'/api/curriculum/topics/{topic}/complete',json={'user_id':user['user_id']}).status_code==403
+    assert client.delete(f'/api/curriculum/topics/{topic}/complete',params={'user_id':user['user_id']}).status_code==403
+    assert client.get(f'/api/curriculum/completed/{user["user_id"]}').status_code==403
+    assert client.get(f'/api/curriculum/topics/{topic}/status/{user["user_id"]}').status_code==403
+
+
+def test_completion_requires_student_and_existing_topic(client,course):
+    teacher=login(client,'teacher')
+    assert client.post(f'/api/curriculum/topics/{course[2][0]}/complete',json={'user_id':teacher['user_id']}).status_code==403
+    student=login(client)
+    assert client.post('/api/curriculum/topics/2147483647/complete',json={'user_id':student['user_id']}).status_code==404
+
+
+def test_numeric_response_persists_without_retrieval(client,course):
+    sid,uid=session(client,course)
+    response=client.post('/api/tutor/query',json={'query':'encrypt plaintext ACT using Hill cipher [[6,24,1],[13,16,10],[20,17,15]]',
+                                               'subject_id':course[0],'topic_id':course[2][0],'session_id':sid})
+    assert response.status_code==200,response.text
+    assert 'POH' in response.json()['answer']
+    assert len(client.get(f'/api/sessions/{sid}').json()['messages'])==2
+
+
+def test_upstream_slide_title_extraction():
+    from backend.pdf_indexer import DocumentIndexer
+    quarters=[[(1,'Relational Keys\nPrimary keys uniquely identify rows.')],
+              [(2,'Database Normalization\nOrganizing relational dependencies.')],
+              [(3,'Transaction Isolation\nConcurrent access and consistency.')],
+              [(4,'Query Optimization\nEvaluating execution plans.')]]
+    titles=DocumentIndexer()._extract_quarter_topics_pure(quarters,'Database Foundations')
+    assert len(titles)==4
+    assert 'Relational Keys' in titles

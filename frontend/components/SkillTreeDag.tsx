@@ -1,17 +1,48 @@
+/**
+ * Skill Tree Directed Acyclic Graph (DAG) Visualization Component.
+ *
+ * Responsibilities:
+ * 1. Topological Tier Grouping: Organizes course concepts into progressive learning tiers
+ *    (Tier 1: Foundations to Tier 4: Advanced Systems) derived from MySQL difficulty_level.
+ * 2. Prerequisite Traversal: On node selection, queries backend Recursive CTEs to retrieve
+ *    the full chain of direct and transitive ancestor prerequisites.
+ * 3. Forward Unlock Preview: Queries backend Recursive CTE to identify downstream concepts
+ *    unlocked upon mastering the selected concept.
+ * 4. Interactive Learning Launcher: Provides one-click transition to launch the Socratic AI Tutor
+ *    focused on the active concept.
+ * 5. Completion Status Visualization: Displays clearly visible green tick mark (✓) badges
+ *    for concepts manually marked as completed by the student.
+ */
+
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
-import { Subject, SubjectGraph, Topic, PrerequisiteItem, UnlockedTopicItem } from "@/lib/types";
+import { Subject, SubjectGraph, Topic, PrerequisiteItem, UnlockedTopicItem, User } from "@/lib/types";
 import { api } from "@/lib/api";
-import { GitFork, BookOpen, Layers, Play, MessageSquare, ArrowRight, CheckCircle2, ShieldAlert } from "lucide-react";
+import {
+  GitFork,
+  BookOpen,
+  Layers,
+  Play,
+  MessageSquare,
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  ShieldAlert,
+} from "lucide-react";
 
 interface SkillTreeDagProps {
   subject: Subject;
+  subjects?: Subject[];
+  currentUser?: User;
+  completedTopicIds?: Set<number>;
   onSelectTopicForTutor: (topicId: number) => void;
 }
 
 export function SkillTreeDag({
   subject,
+  currentUser,
+  completedTopicIds,
   onSelectTopicForTutor,
 }: SkillTreeDagProps) {
   const [graph, setGraph] = useState<SubjectGraph | null>(null);
@@ -21,6 +52,32 @@ export function SkillTreeDag({
   const [unlockedTopics, setUnlockedTopics] = useState<UnlockedTopicItem[]>([]);
   const [chainLoading, setChainLoading] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [completedSet, setCompletedSet] = useState<Set<number>>(completedTopicIds || new Set());
+
+  // Keep completedSet synchronized with parent props
+  useEffect(() => {
+    if (completedTopicIds) {
+      setCompletedSet(completedTopicIds);
+    }
+  }, [completedTopicIds]);
+
+  // Fetch student topic completions from API
+  useEffect(() => {
+    async function fetchCompletions() {
+      const uid = currentUser?.user_id;
+      if (!uid) {
+        setCompletedSet(new Set());
+        return;
+      }
+      try {
+        const res = await api.getCompletedTopics(uid, subject.subject_id);
+        setCompletedSet(new Set(res.completed_topic_ids));
+      } catch (err) {
+        console.error("Failed to load completed topics in SkillTreeDag:", err);
+      }
+    }
+    fetchCompletions();
+  }, [subject.subject_id, currentUser?.user_id]);
 
   useEffect(() => {
     async function loadGraph() {
@@ -29,8 +86,7 @@ export function SkillTreeDag({
         const data = await api.getSubjectGraph(subject.subject_id);
         setGraph(data);
         if (data.nodes.length > 0) {
-          // Select first node by default or retain
-          setSelectedTopicId(data.nodes[0].id);
+          setSelectedTopicId((prev) => (prev ? prev : data.nodes[0].id));
         }
       } catch (err) {
         console.error("Failed to load skill tree graph:", err);
@@ -194,6 +250,7 @@ export function SkillTreeDag({
                       const isSelected = selectedTopicId === node.id;
                       const isAncestor = ancestorIds.has(node.id);
                       const isDescendant = descendantIds.has(node.id);
+                      const isCompleted = completedSet.has(node.id);
 
                       let borderClass = "border-zinc-800/80 hover:border-zinc-700 bg-zinc-900/40 hover:bg-zinc-900/70";
                       if (isSelected) {
@@ -211,14 +268,30 @@ export function SkillTreeDag({
                           className={`group cursor-pointer rounded-xl border p-4 transition-all duration-150 flex flex-col justify-between ${borderClass}`}
                         >
                           <div>
-                            <h4 className="text-sm font-medium text-zinc-100 group-hover:text-orange-300 transition-colors leading-snug">
-                              {node.label}
-                            </h4>
+                            <div className="flex items-start justify-between gap-2">
+                              <h4 className="text-sm font-medium text-zinc-100 group-hover:text-orange-300 transition-colors leading-snug">
+                                {node.label}
+                              </h4>
+                              {isCompleted && (
+                                <span
+                                  className="inline-flex items-center gap-1 shrink-0 rounded-md bg-emerald-950/70 border border-emerald-500/50 px-2 py-0.5 text-[11px] font-semibold text-emerald-400 shadow-sm"
+                                  title="Completed by you"
+                                >
+                                  <Check className="h-3 w-3 text-emerald-400" strokeWidth={3} />
+                                  <span>Completed</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="mt-3 flex items-center justify-between text-xs pt-2.5 border-t border-zinc-800/60">
                             <div>
-                              {isSelected ? (
+                              {isCompleted ? (
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                                  Completed
+                                </span>
+                              ) : isSelected ? (
                                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-400">
                                   <span className="h-1.5 w-1.5 rounded-full bg-orange-400" />
                                   Active Concept
@@ -256,9 +329,17 @@ export function SkillTreeDag({
                     <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">
                       Selected Concept
                     </span>
-                    <span className="text-xs font-medium text-orange-400 bg-orange-950/60 border border-orange-800/60 px-2 py-0.5 rounded-md">
-                      Tier {selectedNode.difficulty_level}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {completedSet.has(selectedNode.id) && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/70 border border-emerald-500/50 px-2 py-0.5 rounded-md shadow-sm">
+                          <Check className="h-3 w-3 text-emerald-400" strokeWidth={3} />
+                          <span>Completed</span>
+                        </span>
+                      )}
+                      <span className="text-xs font-medium text-orange-400 bg-orange-950/60 border border-orange-800/60 px-2 py-0.5 rounded-md">
+                        Tier {selectedNode.difficulty_level}
+                      </span>
+                    </div>
                   </div>
                   <h3 className="text-base font-semibold text-zinc-100 leading-snug">
                     {selectedNode.label}

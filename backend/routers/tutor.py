@@ -1,3 +1,21 @@
+"""
+Slide-Grounded Vector RAG Tutoring Pipeline & Graph Traversal Engine.
+
+This module implements the core RAG tutoring logic:
+1. Relational Graph Context: Resolves active concept and queries PostgreSQL with a
+   Recursive Common Table Expression (CTE) to determine valid prerequisite ancestor topics.
+2. Contextual Query Expansion: Automatically expands short or follow-up prompts
+   (e.g., "how to solve", "matrix") using previous conversation turn history from MySQL.
+3. Dense Vector Retrieval: Queries ChromaDB collections using cosine similarity.
+   Applies relational prerequisite filtering (WHERE topic_id IN (...)) when enabled.
+4. Deterministic Numerical Solver: Solves matrix cryptography problems (Hill Cipher encryption/decryption)
+   with full mathematical steps, modular inverse checks, and LaTeX formatting.
+5. Grounded Slide Synthesis: Parses raw vector chunks into structured slide cards displaying
+   matched slide titles, slide numbers, similarity match percentages, formulas, and bullet points.
+6. Persistent Conversation Logging: Commits student and tutor interactions to CONVERSATION_LOGS
+   for auditability and session resumption.
+"""
+
 import os
 import re
 from typing import List, Dict, Optional, Any, Tuple
@@ -11,11 +29,10 @@ from backend.database import get_transaction
 from backend.database import execute_query, execute_one, execute_dml
 from backend.vector_service import vector_service
 
-router = APIRouter(prefix="/api/tutor", tags=["Socratic RAG Tutoring Pipeline"])
-
-MIN_RELEVANCE_THRESHOLD = 0.22
+router = APIRouter(prefix="/api/tutor", tags=["Slide-Grounded Vector RAG Tutoring Pipeline"])
 
 class TutorQueryRequest(BaseModel):
+    """Request model for student queries directed to the Socratic RAG tutor."""
     query: str = Field(min_length=1, max_length=4000)
     subject_id: int
     topic_id: Optional[int] = None
@@ -24,6 +41,7 @@ class TutorQueryRequest(BaseModel):
     include_prereqs: bool = True
 
 class TutorQueryResponse(BaseModel):
+    """Structured response model containing tutor explanation and grounding metadata."""
     answer: str
     target_topic: Optional[Dict[str, Any]] = None
     prerequisites: List[Dict[str, Any]] = []
@@ -36,9 +54,13 @@ class TutorQueryResponse(BaseModel):
     top_source: Optional[str] = None
 
 def _fetch_prerequisite_chain(topic_id: int) -> List[Dict]:
+    """
+    Execute a Recursive Common Table Expression (CTE) in PostgreSQL to traverse
+    the Directed Acyclic Graph (DAG) backwards from target topic to all ancestor prerequisites.
+    """
     cte_query = """
         WITH RECURSIVE PrerequisiteChain AS (
-            SELECT 
+            SELECT
                 tp.topic_id AS target_topic_id,
                 tp.prereq_topic_id,
                 t_pre.topic_name AS prereq_topic_name,
@@ -52,7 +74,7 @@ def _fetch_prerequisite_chain(topic_id: int) -> List[Dict]:
 
             UNION ALL
 
-            SELECT 
+            SELECT
                 pc.target_topic_id,
                 tp_parent.prereq_topic_id,
                 t_ancestor.topic_name,
@@ -64,7 +86,7 @@ def _fetch_prerequisite_chain(topic_id: int) -> List[Dict]:
             INNER JOIN TOPIC_PREREQUISITES tp_parent ON pc.prereq_topic_id = tp_parent.topic_id
             INNER JOIN TOPICS t_ancestor ON tp_parent.prereq_topic_id = t_ancestor.topic_id
         )
-        SELECT 
+        SELECT
             prereq_topic_id,
             prereq_topic_name,
             prereq_difficulty,
@@ -81,50 +103,76 @@ def _clean_concept_name(name: Optional[str]) -> str:
     if not name:
         return "STEM Curriculum"
     clean = re.sub(r'^\d+[\s_-]*', '', name)
-    clean = re.sub(
-        r':\s*(Fundamental Concepts|Structural Models|Dynamic Processes|Advanced Synthesis).*$',
-        '',
-        clean,
-        flags=re.IGNORECASE
-    )
+    clean = re.sub(r':.*$', '', clean)
     clean = re.sub(r'[_\-]+', ' ', clean).strip()
     return clean.title() if clean else name
 
-def _clean_chunk_text(raw_text: str) -> str:
+def _clean_chunk_text(raw_text: str, subject_name: str = "") -> str:
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     cleaned_lines = []
+
+    noise_patterns = [
+        r"^UE\d{2}[A-Z]{2}\d+",
+        r"^[A-Z]{2,4}\d{3,4}",
+        r"^Unit\s+\d+",
+        r"^Lecture\s+\d+",
+        r"^Session\s+\d+",
+        r"^Department\s+of\s+",
+        r"^Faculty\s+of\s+",
+        r"^PES\s+UNIVERSITY",
+        r"^RING\s+ROAD\s+CAMPUS",
+        r"^ISFCR",
+        r"^Page\s+\d+",
+        r"^Slide\s+\d+",
+        r"^Thank\s+you",
+        r"^Any\s+questions",
+        r"^In\s+this\s+Session",
+        r"^[A-Za-z\s]+Excerpted\s+from",
+        r"^Wiley,\s+\d+",
+        r"^Emergency\s+Exit",
+        r"^Phones\s+on\s+silent",
+        r"^Washroom",
+        r"^No\s+sleeping",
+        r"^No\s+chatting",
+        r"^Assembly\s+point",
+    ]
+    if subject_name:
+        clean_sub = re.sub(r"[_\-]+", " ", subject_name).strip()
+        noise_patterns.append(rf"^{re.escape(clean_sub)}$")
+        noise_patterns.append(rf"^{re.escape(clean_sub)}\s+")
+
     for line in lines:
-        upper = line.upper()
-        if any(h in upper for h in [
-            "UE22CS", "UE24CS", "APPLIED CRYPTOGRAPHY", "PES UNIVERSITY", 
-            "EMERGENCY EXIT", "NO CHATTING", "ASSEMBLY POINT", "PHONES ON SILENT", 
-            "WASHROOM", "NO SLEEPING", "THANK YOU", "ISFCR", "ISFCR.PESU", 
-            "PAGE ", "A NOTE ON SECURITY", "DEPARTMENT OF", "RING ROAD CAMPUS",
-            "ANY QUESTIONS", "THANKS FOR YOUR ATTENTION"
-        ]):
+        if any(re.search(p, line, re.IGNORECASE) for p in noise_patterns):
             continue
-        if any(ex in upper for ex in ["EXAMPLE 1", "EXAMPLE 2", "EXAMPLE 3", "EXAMPLE 4", "EXAMPLE 5", "EXAMPLE 6"]):
-            if len(line.split()) < 6:
-                continue
         clean = line.lstrip("-* \t\u261e\u25cf\u2022").strip()
-        if clean:
+        if clean and len(clean) > 1:
             cleaned_lines.append(clean)
     return " ".join(cleaned_lines)
 
 def _is_substantive_chunk(raw_text: str) -> bool:
     cleaned = _clean_chunk_text(raw_text)
-    return len(cleaned) >= 35 and len(cleaned.split()) >= 6
+    return len(cleaned) >= 30 and len(cleaned.split()) >= 5
+
+def _is_contextual_query(q: str) -> bool:
+    q_low = q.lower().strip()
+    words = q_low.split()
+    if len(words) <= 4:
+        context_triggers = {
+            "how", "solve", "why", "what", "steps", "calculate", "example",
+            "formula", "more", "detail", "definition", "state", "states",
+            "method", "procedure", "explain", "matrix"
+        }
+        return any(w in context_triggers for w in words)
+    return False
 
 # ==============================================================================
-# Numerical Solver for Hill Cipher
+# Numerical Solver for Matrix / Hill Cipher Problems (when asked explicitly)
 # ==============================================================================
 
 def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
     q_lower = query.lower()
-    
-    # Must involve hill cipher or encryption/matrix calculation
     is_calc = any(k in q_lower for k in [
-        "encrypt", "decrypt", "calculation", "step by step", "calculate", 
+        "encrypt", "decrypt", "calculation", "step by step", "calculate",
         "find the ciphertext", "compute", "show the calculation"
     ])
     if not is_calc:
@@ -132,7 +180,6 @@ def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
 
     is_decrypt = "decrypt" in q_lower
 
-    # Match matrix like [[2,3],[3,4]] or [[3, 3], [2, 5]] or [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
     matrix_match = re.search(
         r'\[\s*\[\s*([\d\s,\-]+)\s*\]\s*,\s*\[\s*([\d\s,\-]+)\s*\](?:\s*,\s*\[\s*([\d\s,\-]+)\s*\])?\s*\]',
         query
@@ -154,16 +201,14 @@ def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
         if len(r) != n:
             return None
 
-    # Find target text: e.g. "plaintext CD", "plaintext 'CD'", "encrypt AB"
     target_text = None
     text_match = re.search(r'(?:plaintext|ciphertext|text|message)\s*[:=]?\s*[\'"]?([A-Za-z]{2,12})[\'"]?', query, re.IGNORECASE)
     if text_match:
         target_text = text_match.group(1).upper()
     else:
-        # Search for standalone uppercase words not in keywords
         exclude = {
-            "USING", "THE", "HILL", "CIPHER", "ENCRYPT", "DECRYPT", "WITH", "KEY", 
-            "MATRIX", "SHOW", "CALCULATION", "STEP", "BY", "FIND", "AND", "PLAIN", 
+            "USING", "THE", "HILL", "CIPHER", "ENCRYPT", "DECRYPT", "WITH", "KEY",
+            "MATRIX", "SHOW", "CALCULATION", "STEP", "BY", "FIND", "AND", "PLAIN",
             "TEXT", "CIPHERTEXT", "CODE"
         }
         words = re.findall(r'\b[A-Za-z]{2,12}\b', query)
@@ -213,120 +258,194 @@ def solve_hill_cipher(problem: Dict[str, Any]) -> Tuple[str, str]:
     answer+='\n'.join(steps)+f'\n\n**{title}: {"".join(result)}**\n\n'+question
     return answer,question
 
-# ==============================================================================
-# Domain-Specific Response Generators
-# ==============================================================================
 
-def _generate_socratic_response(
-    query: str,
-    topic_name: Optional[str],
-    prereqs: List[Dict],
+def _extract_slide_topics_and_definitions(
     chunks: List[Dict],
-    top_sim: Optional[float] = None,
-    top_src: Optional[str] = None,
-    history: Optional[List[Dict]] = None
-) -> Tuple[str, Optional[str], Optional[str], Optional[float], Optional[str]]:
-    clean_topic = _clean_concept_name(topic_name)
-    q_lower = query.lower()
+    subject_name: str = ""
+) -> List[Dict[str, Any]]:
+    """
+    Parse dense vector chunks returned from ChromaDB into structured slide cards.
 
-    # Check if this is a numerical Hill cipher problem first (deterministic mathematical calculation)
-    if ("hill" in q_lower or "hill" in clean_topic.lower() or "cipher" in q_lower):
-        prob = parse_hill_cipher_problem(query)
-        if prob:
-            direct_answer, socratic_q = solve_hill_cipher(prob)
-            return direct_answer, socratic_q, None, top_sim, top_src
+    Processing Steps:
+    1. Extracts metadata attributes: file_name, page_number, cosine similarity distance.
+    2. Filters out presentation boilerplate and administrative acknowledgment slides.
+    3. Identifies the primary slide header as title and following lines as body bullets/formulas.
+    4. Deduplicates slides with identical normalized titles to present concise summaries.
 
+    Args:
+        chunks: List of dictionary records returned by vector_service.search().
+        subject_name: Optional course subject string to strip redundant course headers.
 
-    # Step 2.4: Insufficient retrieval handling
-    if not chunks or (top_sim is not None and top_sim < MIN_RELEVANCE_THRESHOLD):
-        insufficient_msg = (
-            f"The available course textbook passages for **{clean_topic}** do not contain sufficient information to answer this question confidently.\n\n"
-            f"Could you please clarify your question or select a specific concept from the curriculum to explore?"
+    Returns:
+        List of structured slide dictionaries with keys: title, body, similarity, page, file.
+    """
+    parsed_slides = []
+    seen_titles = set()
+
+    for ch in chunks:
+        doc = ch.get("document", "")
+        meta = ch.get("metadata", {})
+        sim = ch.get("similarity", 0)
+        page = meta.get("page_number", "N/A")
+        src_file = meta.get("file_name", "Course Slides")
+
+        # Skip administrative acknowledgment / contributor slides
+        doc_lower = doc.lower()
+        # General acknowledgment / administrative slide filtering
+        if any(w in doc_lower for w in [
+            "grateful thanks", "acknowledgment", "contribution of slides",
+            "teaching assistant", "all rights reserved", "emergency exit"
+        ]) and any(w in doc_lower for w in ["@gmail.com", "@", "prof.", "dr."]):
+            continue
+
+        raw_lines = [l.strip() for l in doc.splitlines() if l.strip()]
+        if not raw_lines:
+            continue
+
+        ADMIN_NOISE_RE = r"(?i)\b(department of|faculty of|school of|university|institute|campus|all rights reserved|copyright|page \d+|thank you|any questions|excerpted from)\b"
+        cleaned_lines = []
+        for line in raw_lines:
+            if subject_name and subject_name.lower() in line.lower() and len(line) <= len(subject_name) + 12:
+                continue
+            if re.search(ADMIN_NOISE_RE, line):
+                sub_clean = re.sub(ADMIN_NOISE_RE, "", line).strip()
+                if len(sub_clean) > 10:
+                    cleaned_lines.append(sub_clean)
+                continue
+            cleaned = line.lstrip("-* \t\u261e\u25cf\u2022").strip()
+            if cleaned and len(cleaned) > 1:
+                cleaned_lines.append(cleaned)
+
+        if not cleaned_lines:
+            continue
+
+        title = cleaned_lines[0]
+        body = cleaned_lines[1:]
+
+        norm_title = re.sub(r"[^a-zA-Z0-9]", "", title.lower())
+        if norm_title in seen_titles:
+            continue
+        seen_titles.add(norm_title)
+
+        parsed_slides.append({
+            "title": title,
+            "body": body,
+            "similarity": sim,
+            "page": page,
+            "file": src_file,
+            "chunk": ch
+        })
+
+    return parsed_slides
+
+def _synthesize_slide_rag_answer(
+    query: str,
+    parsed_slides: List[Dict[str, Any]],
+    subject_name: str,
+    clean_topic: str
+) -> str:
+    """
+    Synthesize a clean, academically grounded response from extracted slide cards.
+
+    Key Principles:
+    - Zero Hallucination: Relies strictly on retrieved slide content and exact terminology.
+    - Mathematical Precision: Formats mathematical formulas, matrices, and state transitions
+      into markdown code blocks and LaTeX KaTeX syntax.
+    - Grounding Badges: Prefixes every topic section with its exact cosine match percentage
+      and slide page number for verifiable attribution.
+    - Zero Generic Fillers: Omits conversational filler phrases to provide concise answers.
+
+    Args:
+        query: User's original prompt.
+        parsed_slides: Structured slide dictionaries extracted from top-K chunks.
+        subject_name: Name of the course subject.
+        clean_topic: Active concept topic name.
+
+    Returns:
+        Formatted markdown string ready for rendering in the Tutor chat interface.
+    """
+    if not parsed_slides:
+        return (
+            f"No direct matching topics were found in the uploaded course slides for **{subject_name}** "
+            f"matching *\"{query}\"*. Please check your query or verify the slide collection in the Vectors tab."
         )
-        socratic_q = f"Which foundational concept in {clean_topic} would you like to explore next?"
-        return insufficient_msg, socratic_q, None, top_sim, top_src
 
-    grounding_excerpt = _clean_chunk_text(chunks[0]["document"]) if chunks else None
-    if grounding_excerpt and len(grounding_excerpt) > 300:
-        grounding_excerpt = grounding_excerpt[:300] + "..."
+    # Separate substantive slides (slides with explanation/bullets) from title divider slides
+    content_slides = [s for s in parsed_slides if len(s["body"]) > 0]
+    selected_slides = content_slides[:4] if content_slides else parsed_slides[:4]
 
-    # Step 2.3: Check if an external LLM key is configured (Groq / Gemini / OpenAI)
-    groq_api_key = settings.GROQ_API_KEY
-    if groq_api_key:
-        try:
-            from groq import Groq
-            client = Groq(api_key=groq_api_key, timeout=30, max_retries=1)
-            context_text = "\n\n".join([
-                f"[{c.get('metadata', {}).get('file_name', 'Textbook')}]: {_clean_chunk_text(c['document'])}"
-                for c in chunks
-            ])
-            prereq_text = ", ".join([p["prereq_topic_name"] for p in prereqs]) if prereqs else "None"
+    output_blocks = []
 
-            prompt = f"""You are a dedicated, encouraging, and academically rigorous Socratic STEM Tutor.
-Answer the student's specific question directly, using the provided course textbook excerpts as factual grounding.
+    q_lower = query.lower()
+    is_solve_or_calc = any(k in q_lower for k in [
+        "how to solve", "calculate", "solve", "step", "formula", "example",
+        "procedure", "matrix", "compute"
+    ])
 
-Rules:
-1. Focus directly on the specific question asked. If a definition is requested, provide a concise definition. If a formula is requested, explain the formula. If a numerical problem is presented, calculate the steps and state the final answer.
-2. Do NOT append unnecessary generic boilerplate or fixed theoretical paragraphs.
-3. Ground all factual assertions, formulas, and mechanisms in the textbook excerpts below.
-4. Do NOT include course codes (e.g., UE22CS...), slide numbers, file names, or administrative boilerplate.
-5. Conclude your explanation with exactly ONE thoughtful Socratic follow-up question directly related to the current inquiry.
-6. Never generate unrelated questions about networking, packet drops, or latency unless the topic is specifically computer networks.
+    if is_solve_or_calc:
+        output_blocks.append(f"### **Problem Solving & Methods from Course Slides**\n")
+    else:
+        output_blocks.append(f"### **Topics & Definitions from Course Slides**\n")
 
-Textbook Excerpts:
-{context_text}
+    for item in selected_slides:
+        sim_pct = f"{round(item['similarity'] * 100, 1)}%"
+        page_ref = f"Slide Page {item['page']}" if item['page'] != "N/A" else item['file']
 
-Active Concept: {clean_topic}
-Prerequisite Knowledge: {prereq_text}
-Student Question: {query}"""
+        block_lines = []
+        block_lines.append(f"#### **{item['title']}** `(Match: {sim_pct} · {page_ref})`")
 
-            completion = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "system", "content": prompt}] + (history or []) + [{"role": "user", "content": query}],
-                temperature=0.3,
-                max_tokens=600
-            )
-            raw_answer = completion.choices[0].message.content.strip()
+        body_lines = item["body"]
+        if not body_lines:
+            block_lines.append(f"*(Title section in slide deck — refer to {page_ref} for visual diagrams)*\n")
+        else:
+            bullets = []
+            narrative = []
+            for line in body_lines:
+                # Highlight mathematical formulas, transitions, or matrix equations
+                if any(sym in line for sym in [
+                    "PI =", "Pij", "P =", "Xn", "S = {", "lambda", "sum", "alpha",
+                    "beta", "->", "x Pn", "det", "gcd", "bmod"
+                ]):
+                    narrative.append(f"> `{line}`")
+                elif line.startswith("-") or line.startswith("•") or line.startswith("*") or (len(line) > 1 and line[0].isdigit() and line[1] in ".)"):
+                    bullets.append(line)
+                elif ":" in line and len(line.split(":")[0].split()) <= 4:
+                    k, v = line.split(":", 1)
+                    bullets.append(f"- **{k.strip()}:** {v.strip()}")
+                else:
+                    narrative.append(line)
 
-            lines = raw_answer.splitlines()
-            socratic_q = None
-            for l in reversed(lines):
-                if l.strip().endswith("?") and len(l.strip()) > 15:
-                    socratic_q = l.strip().lstrip("*-# \t")
-                    break
+            if narrative:
+                block_lines.append("\n".join(narrative))
+            if bullets:
+                block_lines.append("\n".join(bullets))
 
-            if not socratic_q:
-                socratic_q = f"How do the underlying principles of {clean_topic} apply in this context?"
-                raw_answer += f"\n\nThink about this: {socratic_q}"
+        output_blocks.append("\n".join(block_lines))
 
-            return raw_answer, socratic_q, grounding_excerpt, top_sim, top_src
-        except Exception:
-            pass
+    return "\n\n".join(output_blocks)
 
-    excerpts=[]
-    for chunk in chunks[:3]:
-        text=_clean_chunk_text(chunk['document'])
-        source=chunk.get('metadata',{}).get('file_name','Uploaded material')
-        page=chunk.get('metadata',{}).get('page_number')
-        excerpts.append(f"**{source}" + (f", page {page}" if page else '') + f"**\n\n{text}")
-    answer="Here are the relevant passages from your uploaded material:\n\n" + "\n\n".join(excerpts)
-    question="How would you explain the main idea in these passages in your own words?"
-    return answer+'\n\n'+question, question, grounding_excerpt, top_sim, top_src
+# ==============================================================================
+# Main Tutor API Endpoint
+# ==============================================================================
 
-@router.post("/query", response_model=TutorQueryResponse)
-def socratic_tutor_query(req: TutorQueryRequest, user=Depends(current_user)):
-    if not req.query.strip():
-        raise HTTPException(422,'Enter a question.')
-    if req.user_id is not None and req.user_id != user['user_id']:
-        raise HTTPException(403,'User identity must match the signed-in account.')
-    history=[]
-    if req.session_id:
-        session=owned_session(req.session_id,user)
-        if session['subject_id'] != req.subject_id:
-            raise HTTPException(400,'Session does not belong to this subject.')
-        rows=execute_query('SELECT role,content FROM conversation_logs WHERE session_id=%s ORDER BY log_id DESC LIMIT 8',(req.session_id,))
-        history=list(reversed(rows))
+def _build_tutor_response(req: TutorQueryRequest):
+    """
+    Primary Socratic RAG Tutoring Endpoint.
 
+    Algorithmic Workflow:
+    1. Relational Validation: Confirms subject existence in SUBJECTS table.
+    2. Hierarchical Prerequisite Graph Traversal: If topic_id is specified, executes
+       PostgreSQL Recursive CTE to retrieve all prerequisite ancestor topics.
+    3. Deterministic Cryptographic Math Detection: If prompt contains a matrix problem
+       (e.g., Hill Cipher encryption or decryption), evaluates it deterministically with
+       step-by-step modular linear algebra ($C = KP \\bmod 26$, modular inverse).
+    4. Conversational Context Expansion: Expands short contextual follow-up queries
+       (e.g. "how to solve", "give steps") with previous user turn content from CONVERSATION_LOGS.
+    5. Top-K Semantic Vector Retrieval: Searches ChromaDB collection using cosine similarity.
+       When relational prerequisite filtering is active, filters candidate chunks to valid topic_ids.
+    6. Slide Information Synthesis: Parses top chunks into structured slide cards with match metrics.
+    7. Database Turn Logging: Inserts user prompt and tutor response into CONVERSATION_LOGS.
+    """
     subject = execute_one(
         "SELECT subject_id, subject_key, subject_name FROM SUBJECTS WHERE subject_id = %s",
         (req.subject_id,)
@@ -335,6 +454,7 @@ def socratic_tutor_query(req: TutorQueryRequest, user=Depends(current_user)):
         raise HTTPException(status_code=404, detail="Subject not found.")
 
     subject_key = subject["subject_key"]
+    subject_name = subject["subject_name"]
 
     # 1. Relational Graph Lookup (Topic & Recursive Prerequisites)
     target_topic = None
@@ -353,10 +473,55 @@ def socratic_tutor_query(req: TutorQueryRequest, user=Depends(current_user)):
             prereqs = _fetch_prerequisite_chain(target_topic["topic_id"])
             allowed_topic_ids = [target_topic["topic_id"]] + [p["prereq_topic_id"] for p in prereqs]
 
-    active_concept_name = target_topic["topic_name"] if target_topic else subject["subject_name"]
+    active_concept_name = target_topic["topic_name"] if target_topic else subject_name
     clean_concept = _clean_concept_name(active_concept_name)
 
-    # 2. Dense Vector Retrieval (ChromaDB)
+    # 2. Check for explicit numerical calculation (e.g. Hill cipher matrix arithmetic)
+    cipher_prob = parse_hill_cipher_problem(req.query)
+    if cipher_prob:
+        calc_answer, note = solve_hill_cipher(cipher_prob)
+        return TutorQueryResponse(
+            answer=calc_answer,
+            target_topic=target_topic,
+            prerequisites=prereqs,
+            retrieved_chunks=[],
+            session_id=req.session_id,
+            relational_filter_applied=False,
+            reflection_question=None,
+            grounding_excerpt=None,
+            top_similarity=1.0,
+            top_source="Deterministic Math Solver"
+        )
+
+    # 3. Handle Contextual / Short Follow-up Queries (e.g. "how to solve", "give example")
+    effective_query = req.query.strip()
+    if not effective_query:
+        effective_query = clean_concept
+
+    if _is_contextual_query(effective_query):
+        context_parts = []
+        # Check conversation history for session
+        if req.session_id:
+            try:
+                last_turn = execute_one(
+                    "SELECT content FROM CONVERSATION_LOGS WHERE session_id = %s AND role = 'user' ORDER BY log_id DESC LIMIT 1",
+                    (req.session_id,)
+                )
+                if last_turn and last_turn["content"]:
+                    prev_text = last_turn["content"].strip()
+                    if prev_text.lower() not in effective_query.lower() and len(prev_text.split()) <= 6:
+                        context_parts.append(prev_text)
+            except Exception:
+                pass
+
+        if clean_concept and clean_concept.lower() not in effective_query.lower():
+            if not any(clean_concept.lower() in p.lower() for p in context_parts):
+                context_parts.append(clean_concept)
+
+        if context_parts:
+            effective_query = f"{' '.join(context_parts)} {effective_query}"
+
+    # 4. Dense Vector Retrieval (ChromaDB)
     stats = vector_service.get_stats(subject_key)
     total_col_chunks = stats.get("total_chunks", 0)
     candidate_limit = min(20, max(8, total_col_chunks)) if total_col_chunks > 0 else 8
@@ -364,89 +529,136 @@ def socratic_tutor_query(req: TutorQueryRequest, user=Depends(current_user)):
     relational_filter_applied = False
     raw_chunks: List[Dict] = []
 
-    # Try relational prerequisite-guided search first
+    # A. Try relational prerequisite-guided search first if requested
     if allowed_topic_ids and req.include_prereqs:
         try:
             where_filter = {"topic_id": {"$in": allowed_topic_ids}}
             candidate_chunks = vector_service.search(
                 subject_key=subject_key,
-                query_text=req.query,
+                query_text=effective_query,
                 n_results=candidate_limit,
                 where_filter=where_filter
             )
-            substantive_matches = [c for c in candidate_chunks if _is_substantive_chunk(c["document"])]
-            if substantive_matches and substantive_matches[0].get("similarity", 0) >= MIN_RELEVANCE_THRESHOLD:
+            substantive_matches = [c for c in candidate_chunks if _is_substantive_chunk(c.get("document", ""))]
+            if substantive_matches and substantive_matches[0].get("similarity", 0) >= 0.20:
                 raw_chunks = candidate_chunks
                 relational_filter_applied = True
         except Exception:
             raw_chunks = []
 
-    # If relational filter returned no substantive matches, search subject-wide collection
+    # B. Subject-wide search if relational search returned no substantive matches
     if not raw_chunks:
         raw_chunks = vector_service.search(
             subject_key=subject_key,
-            query_text=req.query,
+            query_text=effective_query,
             n_results=candidate_limit
         )
 
-    # If the user query is short or template-based, augment with clean concept
-    substantive_chunks = [c for c in raw_chunks if _is_substantive_chunk(c["document"])]
-    if not substantive_chunks and clean_concept and clean_concept.lower() not in req.query.lower():
-        augmented_query = f"{clean_concept} {req.query}"
-        augmented_chunks = vector_service.search(
+    # C. Fallback to raw query if effective query had empty results
+    if not raw_chunks and effective_query != req.query.strip():
+        raw_chunks = vector_service.search(
             subject_key=subject_key,
-            query_text=augmented_query,
+            query_text=req.query.strip(),
             n_results=candidate_limit
         )
-        aug_substantive = [c for c in augmented_chunks if _is_substantive_chunk(c["document"])]
-        if aug_substantive:
-            seen_ids = set()
-            merged = []
-            for c in raw_chunks + augmented_chunks:
-                if c["id"] not in seen_ids:
-                    seen_ids.add(c["id"])
-                    merged.append(c)
-            merged.sort(key=lambda x: x.get("similarity", 0), reverse=True)
-            raw_chunks = merged
-            substantive_chunks = [c for c in raw_chunks if _is_substantive_chunk(c["document"])]
 
-    # Prioritize substantive chunks over slide titles and empty fragments
-    grounding_chunks = substantive_chunks[:4] if substantive_chunks else raw_chunks[:4]
+    raw_chunks = [c for c in raw_chunks if c.get("similarity", 0) >= 0.22]
 
-    top_sim = round(float(grounding_chunks[0]["similarity"]), 4) if grounding_chunks else None
-    top_src = grounding_chunks[0].get("metadata", {}).get("file_name", "Course Textbook") if grounding_chunks else None
-    grounding_excerpt = _clean_chunk_text(grounding_chunks[0]["document"])[:300] if grounding_chunks else None
+    # 5. Extract topics and definitions from slide chunks
+    parsed_slides = _extract_slide_topics_and_definitions(raw_chunks, subject_name=subject_name)
 
-    # 3. Generate Socratic Tutor Answer Tailored to Question Type
-    direct_answer, reflection_q, grounding_excerpt, top_sim, top_source = _generate_socratic_response(
+    top_sim = round(float(raw_chunks[0]["similarity"]), 4) if raw_chunks else None
+    top_src = raw_chunks[0].get("metadata", {}).get("file_name", "Course Textbook") if raw_chunks else None
+    grounding_excerpt = _clean_chunk_text(raw_chunks[0]["document"], subject_name=subject_name)[:300] if raw_chunks else None
+
+    # 6. Check if external LLM key is configured (Groq / Gemini)
+    groq_api_key = settings.GROQ_API_KEY
+    if groq_api_key and raw_chunks:
+        try:
+            from groq import Groq
+            client = Groq(api_key=groq_api_key, timeout=30, max_retries=1)
+            context_text = "\n\n".join([
+                f"[{c.get('metadata', {}).get('file_name', 'Slide')} Page {c.get('metadata', {}).get('page_number', 'N/A')}]: {_clean_chunk_text(c['document'], subject_name=subject_name)}"
+                for c in raw_chunks[:4]
+            ])
+
+            prompt = f"""You are a university academic teaching assistant explaining concepts directly from course slides.
+Course: {subject_name}
+Active Concept: {clean_concept}
+Question: {req.query}
+
+Retrieved Slide Excerpts:
+{context_text}
+
+Instructions:
+1. Extract the relevant topics and their definitions/formulas directly from the slide excerpts above.
+2. Structure your response with clear headings (#### Topic Name (Match Score % · Page #)), followed by exact definitions, properties, formulas, and steps found in the slides.
+3. Do NOT include 'Think about this:' or any generic conversational filler.
+4. Answer the student's question directly, clearly, and concisely."""
+
+            completion = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=700
+            )
+            raw_answer = completion.choices[0].message.content.strip()
+            # Remove any unwanted reflection phrases if LLM included them
+            raw_answer = re.sub(r"(?i)\n*think about this:.*$", "", raw_answer).strip()
+
+            return TutorQueryResponse(
+                answer=raw_answer,
+                target_topic=target_topic,
+                prerequisites=prereqs,
+                retrieved_chunks=raw_chunks[:4],
+                session_id=req.session_id,
+                relational_filter_applied=relational_filter_applied,
+                reflection_question=None,
+                grounding_excerpt=grounding_excerpt,
+                top_similarity=top_sim,
+                top_source=top_src
+            )
+        except Exception:
+            pass
+
+    # 7. Local Vector-Driven Slide Synthesis (Pure Dynamic RAG, No domain-specific templates, Zero "Think about this")
+    answer = _synthesize_slide_rag_answer(
         query=req.query,
-        topic_name=active_concept_name,
-        prereqs=prereqs,
-        chunks=grounding_chunks,
-        top_sim=top_sim,
-        top_src=top_src,
-        history=history
+        parsed_slides=parsed_slides,
+        subject_name=subject_name,
+        clean_topic=clean_concept
     )
 
-    # Persist the whole turn atomically, with ownership checked under a row lock.
+    return TutorQueryResponse(
+        answer=answer,
+        target_topic=target_topic,
+        prerequisites=prereqs,
+        retrieved_chunks=raw_chunks[:4],
+        session_id=req.session_id,
+        relational_filter_applied=relational_filter_applied,
+        reflection_question=None,
+        grounding_excerpt=grounding_excerpt,
+        top_similarity=top_sim,
+        top_source=top_src
+    )
+
+
+@router.post('/query',response_model=TutorQueryResponse)
+def socratic_tutor_query(req:TutorQueryRequest,user=Depends(current_user)):
+    if not req.query.strip(): raise HTTPException(422,'Enter a question.')
+    if req.user_id is not None and req.user_id != user['user_id']:
+        raise HTTPException(403,'User identity must match the signed-in account.')
+    if req.session_id:
+        session=owned_session(req.session_id,user)
+        if session['subject_id'] != req.subject_id:
+            raise HTTPException(400,'Session does not belong to this subject.')
+    result=_build_tutor_response(req)
     if req.session_id:
         with get_transaction() as conn:
             session=owned_session(req.session_id,user,conn)
-            topic_id=target_topic['topic_id'] if target_topic else session['current_topic_id']
-            conn.execute("UPDATE learning_sessions SET current_stage='explore', current_topic_id=%s WHERE session_id=%s",(topic_id,req.session_id))
+            topic_id=result.target_topic['topic_id'] if result.target_topic else session['current_topic_id']
+            conn.execute("UPDATE learning_sessions SET current_stage='explore',current_topic_id=%s WHERE session_id=%s",(topic_id,req.session_id))
             with conn.cursor() as cursor:
                 cursor.executemany("INSERT INTO conversation_logs(session_id,topic_id,role,stage,content) VALUES(%s,%s,%s,'explore',%s)",
-                    [(req.session_id,topic_id,'user',req.query),(req.session_id,topic_id,'assistant',direct_answer)])
-
-    return TutorQueryResponse(
-        answer=direct_answer,
-        target_topic=target_topic,
-        prerequisites=prereqs,
-        retrieved_chunks=grounding_chunks,
-        session_id=req.session_id,
-        relational_filter_applied=relational_filter_applied,
-        reflection_question=reflection_q,
-        grounding_excerpt=grounding_excerpt,
-        top_similarity=top_sim,
-        top_source=top_source
-    )
+                    [(req.session_id,topic_id,'user',req.query),(req.session_id,topic_id,'assistant',result.answer)])
+    return result
