@@ -31,7 +31,11 @@ foreach ($service in @('backend','frontend')) {
         $arguments = @('-m','uvicorn','backend.main:app','--host','127.0.0.1','--port','8000')
         $workingPath = $repoPath
     } else {
-        if (-not (Test-Path frontend/.next/BUILD_ID)) { throw 'Run npm run build in frontend first.' }
+        $buildDir = '.next'
+        if (Test-Path .runtime/frontend-build-dir) { $buildDir = (Get-Content .runtime/frontend-build-dir -Raw).Trim() }
+        if ($buildDir -notmatch '^\.next(?:-[a-z0-9-]+)?$') { throw 'Invalid frontend build directory.' }
+        $env:NEXT_DIST_DIR = $buildDir
+        if (-not (Test-Path (Join-Path "frontend/$buildDir" 'BUILD_ID'))) { throw 'Run npm run build in frontend first.' }
         $executable = (Get-Command node).Source
         $arguments = @('node_modules/next/dist/bin/next','start','-p','3000','-H','127.0.0.1')
         $workingPath = Join-Path $repoPath 'frontend'

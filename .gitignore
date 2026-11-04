@@ -241,3 +241,5 @@ frontend/.next/
 
 .runtime/
 LOCAL_ACCESS.md
+
+frontend/.next-*/
