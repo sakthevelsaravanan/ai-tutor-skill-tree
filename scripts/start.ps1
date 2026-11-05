@@ -16,7 +16,14 @@ if ($LASTEXITCODE -ne 0) {
     if ($pgStart.ExitCode -ne 0) { throw 'PostgreSQL did not start; inspect .runtime/logs/postgres.log.' }
 }
 $processes = @{}
-if (Test-Path .runtime/processes.json) { $processes = Get-Content .runtime/processes.json -Raw | ConvertFrom-Json -AsHashtable }
+if (Test-Path .runtime/processes.json) {
+    try {
+        $jsonObj = Get-Content .runtime/processes.json -Raw | ConvertFrom-Json
+        foreach ($prop in $jsonObj.PSObject.Properties) {
+            $processes[$prop.Name] = $prop.Value
+        }
+    } catch {}
+}
 foreach ($service in @('backend','frontend')) {
     $port = if ($service -eq 'backend') { 8000 } else { 3000 }
     $listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
