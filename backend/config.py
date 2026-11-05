@@ -1,21 +1,18 @@
-import os
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
-    DB_HOST: str = os.getenv("DB_HOST", "127.0.0.1")
-    DB_PORT: int = int(os.getenv("DB_PORT", "3306"))
-    DB_USER: str = os.getenv("DB_USER", "root")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "root")
-    DB_NAME: str = os.getenv("DB_NAME", "ai_tutor_db")
-
-    CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", os.path.join(BASE_DIR, "chroma_data"))
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "aitutor-jwt-secret-2026")
-    JWT_ALGORITHM: str = "HS256"
-
-    class Config:
-        env_file = ".env"
-        extra = "allow"
+    model_config = SettingsConfigDict(env_file=BASE_DIR / '.env', extra='ignore')
+    DB_HOST: str = '127.0.0.1'
+    DB_PORT: int = 5433
+    DB_USER: str = 'ai_tutor_app'
+    DB_PASSWORD: str = ''
+    DB_NAME: str = 'ai_tutor_db'
+    CHROMA_PERSIST_DIR: str = str(BASE_DIR / 'chroma_data')
+    JWT_SECRET: str
+    COOKIE_SECURE: bool = False
+    GROQ_API_KEY: str = ''
 
 settings = Settings()

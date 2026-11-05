@@ -6,20 +6,26 @@
  * 2. KaTeX LaTeX Math Rendering: Formats inline $...$ and block $$...$$ equations into math formulas.
  * 3. Match Attributions: Renders cosine similarity badges and slide references for each extracted topic.
  * 4. Relational Prerequisite Toggle: Enables or disables prerequisite-bounded vector search.
- * 5. Dynamic Concept Context: Synchronizes current topic and conversation turns with MySQL sessions.
+ * 5. Dynamic Concept Context: Synchronizes current topic and conversation turns with PostgreSQL sessions.
+ * 6. Manual Topic Completion Tracking: Allows students to click "Done" to persist topic completion
+ *    in the database, triggering live UI updates across the chatbox and Skill Tree.
  */
 
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Subject, Topic, PrerequisiteItem, VectorSearchResult } from "@/lib/types";
+import { Subject, Topic, PrerequisiteItem, VectorSearchResult, User } from "@/lib/types";
 import { api } from "@/lib/api";
 import { CustomDropdown } from "@/components/CustomDropdown";
 import {
   Send,
-  Bot,
+  BookOpen,
   RefreshCw,
   ArrowRight,
+  Check,
+  CheckCircle2,
+  AlertCircle,
+  X,
 } from "lucide-react";
 import katex from "katex";
 
@@ -28,6 +34,9 @@ interface TutorChatProps {
   activeSubjectId: number;
   initialTopicId?: number | null;
   onSubjectChange: (subjectId: number) => void;
+  currentUser: User;
+  completedTopicIds?: Set<number>;
+  onTopicCompleted?: (topicId: number) => void;
 }
 
 interface ChatMessage {
@@ -50,6 +59,9 @@ export function TutorChat({
   activeSubjectId,
   initialTopicId,
   onSubjectChange,
+  currentUser,
+  completedTopicIds,
+  onTopicCompleted,
 }: TutorChatProps) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(initialTopicId || null);
@@ -58,6 +70,43 @@ export function TutorChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [usePrereqFilter, setUsePrereqFilter] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    };
+  }, []);
+
+  // Manual Topic Completion State
+  const effectiveUserId = currentUser?.user_id ?? null;
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [completing, setCompleting] = useState<boolean>(false);
+  const [completionToast, setCompletionToast] = useState<string | null>(null);
+  const [completionError, setCompletionError] = useState<string | null>(null);
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionRef = useRef<Promise<string> | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [sessionError, setSessionError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    api.getSessions(currentUser.user_id, activeSubjectId).then(async sessions => {
+      if (!sessions.length) return;
+      const latest = await api.getSession(sessions[0].session_id);
+      if (cancelled) return;
+      setSessionId(sessions[0].session_id);
+      setMessages(latest.messages.filter(m=>m.role === "user" || m.role === "assistant").map(m=>({id:String(m.log_id),role:m.role,content:m.content,timestamp:new Date(m.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})})));
+    }).catch(e=>{if(!cancelled)setSessionError(e.message);}).finally(()=>{if(!cancelled)setHistoryLoading(false);});
+    return ()=>{cancelled=true;};
+  }, [currentUser.user_id, activeSubjectId]);
+  const ensureSession = async () => {
+    if (sessionError) throw new Error(sessionError);
+    if (sessionId) return sessionId;
+    if (!sessionRef.current) sessionRef.current = api.startSession(currentUser.user_id,activeSubjectId,selectedTopicId || undefined).then(s=>{setSessionId(s.session_id);return s.session_id;}).catch(e=>{sessionRef.current=null;throw e;});
+    return sessionRef.current;
+  };
 
   // Sync topics when activeSubjectId changes
   useEffect(() => {
@@ -88,6 +137,47 @@ export function TutorChat({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Synchronize topic completion status whenever active concept or student changes
+  useEffect(() => {
+    let isMounted = true;
+    async function checkCompletion() {
+      const userId = effectiveUserId;
+      if (!selectedTopicId) {
+        setIsCompleted(false);
+        return;
+      }
+      if (userId === null) {
+        setIsCompleted(false);
+        return;
+      }
+
+      // Check fast prop cache if available
+      if (completedTopicIds && completedTopicIds.has(selectedTopicId)) {
+        setIsCompleted(true);
+        return;
+      }
+
+      setIsCompleted(false);
+
+      try {
+        const res = await api.getTopicCompletionStatus(selectedTopicId, userId);
+        if (isMounted) {
+          setIsCompleted(res.is_completed);
+        }
+      } catch (err) {
+        console.error("Failed to fetch topic completion status:", err);
+      }
+    }
+
+    setCompletionError(null);
+    setCompletionToast(null);
+    checkCompletion();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedTopicId, effectiveUserId, completedTopicIds]);
+
   const currentTopic = topics.find((t) => t.topic_id === selectedTopicId) || topics[0] || null;
 
   const handleDomainChange = async (newSubjectId: number) => {
@@ -103,9 +193,38 @@ export function TutorChat({
     }
   };
 
+  // Action: Mark current topic as completed by student
+  const handleMarkDone = async () => {
+    const targetTopicId = selectedTopicId || (currentTopic ? currentTopic.topic_id : null);
+    if (!targetTopicId || !effectiveUserId || completing || isCompleted) return;
+
+    setCompleting(true);
+    setCompletionError(null);
+    setCompletionToast(null);
+
+    try {
+      const res = await api.markTopicComplete(targetTopicId, effectiveUserId);
+      if (res.is_completed) {
+        setIsCompleted(true);
+        setCompletionToast("Topic marked as completed!");
+        if (onTopicCompleted) {
+          onTopicCompleted(targetTopicId);
+        }
+        setTimeout(() => {
+          setCompletionToast(null);
+        }, 4000);
+      }
+    } catch (err: any) {
+      console.error("Failed to mark topic as completed:", err);
+      setCompletionError(err.message || "Failed to mark topic as completed. Please retry.");
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   const handleSendMessage = async (customQuery?: string) => {
     const textToSend = customQuery || query;
-    if (!textToSend.trim() || loading) return;
+    if (!textToSend.trim() || loading || historyLoading) return;
 
     const userMsgId = `user_${Date.now()}`;
     const userMsg: ChatMessage = {
@@ -120,17 +239,21 @@ export function TutorChat({
     setLoading(true);
 
     try {
+      const activeSessionId = await ensureSession();
       const res = await api.queryTutor({
+        session_id: activeSessionId,
         query: textToSend.trim(),
         subject_id: activeSubjectId,
         topic_id: selectedTopicId || (currentTopic ? currentTopic.topic_id : undefined),
         include_prereqs: usePrereqFilter,
       });
 
+      const fullAnswer = res.answer || "";
+      const assistantMsgId = `ast_${Date.now()}`;
       const assistantMsg: ChatMessage = {
-        id: `ast_${Date.now()}`,
+        id: assistantMsgId,
         role: "assistant",
-        content: res.answer,
+        content: "",
         topicName: res.target_topic?.topic_name || currentTopic?.topic_name,
         prerequisites: res.prerequisites,
         retrievedChunks: res.retrieved_chunks,
@@ -143,7 +266,36 @@ export function TutorChat({
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      setStreamingMsgId(assistantMsgId);
+
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+      }
+
+      let currentLen = 0;
+      const step = Math.max(4, Math.ceil(fullAnswer.length / 50));
+      streamIntervalRef.current = setInterval(() => {
+        currentLen = Math.min(fullAnswer.length, currentLen + step);
+        const chunk = fullAnswer.slice(0, currentLen);
+
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMsgId ? { ...m, content: chunk } : m))
+        );
+
+        if (currentLen >= fullAnswer.length) {
+          if (streamIntervalRef.current) {
+            clearInterval(streamIntervalRef.current);
+            streamIntervalRef.current = null;
+          }
+          setStreamingMsgId(null);
+        }
+      }, 25);
     } catch (err: any) {
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+      }
+      setStreamingMsgId(null);
       const errorMsg: ChatMessage = {
         id: `err_${Date.now()}`,
         role: "assistant",
@@ -156,44 +308,15 @@ export function TutorChat({
     }
   };
 
-  // Helper to get natural concept label for suggestions
-  const getCleanTopicTitle = (topicName?: string) => {
-    if (!topicName) return "this concept";
-    return topicName
-      .replace(/^\d+[\s_-]*/, "")
-      .replace(/^Part\s*\d+:\s*/i, "")
-      .replace(/[_\-]+/g, " ")
-      .trim();
-  };
-
-  const cleanTopicTitle = getCleanTopicTitle(currentTopic?.topic_name);
-
-  // Topic specific suggestions
-  const suggestions = [
-    `Explain the fundamental mechanisms and invariants of ${cleanTopicTitle}.`,
-    `What are the prerequisite concepts required to understand ${cleanTopicTitle}?`,
-    `How does ${cleanTopicTitle} handle core operations and edge cases?`,
-  ];
 
   return (
-    <div className="w-full max-w-5xl mx-auto flex flex-col h-[calc(100vh-8rem)] min-h-[640px] rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
+    <div className="tutor-panel w-full min-w-0 min-h-0 flex-1 flex flex-col rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
       {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/60 px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-zinc-400 whitespace-nowrap">Domain:</span>
-            <div className="w-48 sm:w-60">
-              <CustomDropdown
-                value={String(activeSubjectId)}
-                onChange={(val) => handleDomainChange(Number(val))}
-                options={subjects.map((s) => ({ value: String(s.subject_id), label: s.subject_name }))}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-zinc-400 whitespace-nowrap">Active Concept:</span>
-            <div className="w-56 sm:w-72">
+            <span className="text-xs font-semibold text-zinc-400 whitespace-nowrap">Chapter:</span>
+            <div className="w-44 sm:w-72">
               <CustomDropdown
                 value={String(selectedTopicId || (currentTopic ? currentTopic.topic_id : ""))}
                 onChange={(val) => setSelectedTopicId(Number(val))}
@@ -212,13 +335,20 @@ export function TutorChat({
               onChange={(e) => setUsePrereqFilter(e.target.checked)}
               className="rounded bg-zinc-900 border-zinc-700 text-orange-500 focus:ring-0"
             />
-            <span className="hidden sm:inline">Relational Prerequisite Filter</span>
-            <span className="sm:hidden">Prereq Filter</span>
+            <span className="hidden sm:inline">Include earlier chapters</span>
+            <span className="sm:hidden">Earlier chapters</span>
           </label>
 
           {messages.length > 0 && (
             <button
-              onClick={() => setMessages([])}
+              onClick={() => {
+                if (streamIntervalRef.current) {
+                  clearInterval(streamIntervalRef.current);
+                  streamIntervalRef.current = null;
+                }
+                setStreamingMsgId(null);
+                setMessages([]);
+              }}
               className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               Clear
@@ -228,35 +358,19 @@ export function TutorChat({
       </div>
 
       {/* Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-5">
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 text-zinc-400">
-            <div className="h-10 w-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-200 border border-zinc-800">
-              <Bot className="h-5 w-5" />
+          <div className="flex min-h-full flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 text-zinc-400">
+            <div className="h-10 w-10 rounded-full bg-zinc-900 flex items-center justify-center text-orange-400 border border-zinc-800 shadow-sm">
+              <BookOpen className="h-5 w-5" />
             </div>
             <div className="space-y-1">
               <h3 className="text-sm font-medium text-zinc-200">
-                Socratic AI STEM Tutor
+                Chapter1 Tutor
               </h3>
               <p className="text-xs text-zinc-500 leading-relaxed">
-                Grounded in your textbook embeddings (ChromaDB) and guided by the relational prerequisite DAG (MySQL 8.0 CTE).
+                Ask questions about your course materials, explore concepts, and test your understanding.
               </p>
-            </div>
-
-            <div className="w-full space-y-2 pt-2">
-              <p className="text-[11px] font-mono text-zinc-500 uppercase tracking-wider text-left">
-                Suggested Inquiries
-              </p>
-              {suggestions.map((s, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSendMessage(s)}
-                  className="w-full text-left text-xs p-3 rounded-lg border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 text-zinc-300 transition-colors flex items-center justify-between group"
-                >
-                  <span className="truncate pr-2">{s}</span>
-                  <ArrowRight className="h-3 w-3 text-zinc-500 group-hover:text-zinc-200 shrink-0" />
-                </button>
-              ))}
             </div>
           </div>
         ) : (
@@ -265,10 +379,10 @@ export function TutorChat({
             return (
               <div
                 key={msg.id}
-                className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
+                className={`flex gap-3 transition-all duration-300 ease-out animate-in fade-in-50 slide-in-from-bottom-2 ${
+                  isUser ? "justify-end" : "justify-start"
+                }`}
               >
-
-
                 <div
                   className={`max-w-[88%] sm:max-w-[80%] rounded-xl px-4 py-3 text-xs leading-relaxed space-y-2.5 ${
                     isUser
@@ -279,6 +393,9 @@ export function TutorChat({
                   {/* Clean Direct Educational Answer & Grounded Follow-up */}
                   <div className="space-y-2">
                     {renderFormattedContent(msg.content, isUser)}
+                    {!isUser && streamingMsgId === msg.id && (
+                      <span className="inline-block w-1.5 h-3.5 ml-1 bg-orange-400 animate-pulse rounded-sm align-middle" />
+                    )}
                   </div>
 
                   {/* Timestamp */}
@@ -297,7 +414,6 @@ export function TutorChat({
 
         {loading && (
           <div className="flex gap-3 justify-start">
-
             <div className="rounded-xl px-4 py-3 bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-400 flex items-center gap-2">
               <RefreshCw className="h-3.5 w-3.5 animate-spin text-orange-400" />
               <span>Querying ChromaDB & Relational Prerequisite Chain...</span>
@@ -308,8 +424,46 @@ export function TutorChat({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Composer */}
-      <div className="p-3 border-t border-zinc-800 bg-zinc-900/50">
+      {sessionError && <p role="alert" className="px-4 text-red-400 text-sm">{sessionError}</p>}
+      {/* Input Composer & Topic Completion Area */}
+      <div className="shrink-0 p-3 border-t border-zinc-800 bg-zinc-900/50 space-y-2">
+        {/* Completion Toast Notification */}
+        {completionToast && (
+          <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-emerald-950/70 border border-emerald-500/60 text-xs text-emerald-300 animate-in fade-in duration-200 shadow-sm">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold">{completionToast}</span>
+              <span className="text-[11px] text-emerald-400/80 font-mono">
+                • Green tick mark visible on Skill Tree
+              </span>
+            </div>
+            <button
+              onClick={() => setCompletionToast(null)}
+              className="text-emerald-400 hover:text-emerald-200 transition"
+              title="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Completion Error Notification */}
+        {completionError && (
+          <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-rose-950/70 border border-rose-500/60 text-xs text-rose-300 shadow-sm">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+              <span>{completionError}</span>
+            </div>
+            <button
+              onClick={handleMarkDone}
+              className="text-xs font-semibold underline text-rose-200 hover:text-white ml-2"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Composer Form */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -321,14 +475,38 @@ export function TutorChat({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Ask a question about ${cleanTopicTitle || "the curriculum"}...`}
-            disabled={loading}
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+            placeholder={currentTopic?.topic_name ? `Ask a question about ${currentTopic.topic_name.replace(/^\d+[.\s_-]*/, "")}...` : "Ask a question about this chapter..."}
+            disabled={loading || historyLoading}
+            className="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
           />
+
+          {/* Clearly Visible Done Button Beside Composer */}
+          <button
+            type="button"
+            onClick={handleMarkDone}
+            disabled={completing || !selectedTopicId || !effectiveUserId || isCompleted}
+            className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium border transition-all shrink-0 active:scale-95 ${
+              isCompleted
+                ? "bg-emerald-950/50 text-emerald-400 border-emerald-500/50 cursor-default shadow-sm"
+                : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-emerald-300 border-zinc-700 hover:border-emerald-500/50 shadow-sm"
+            }`}
+            title={isCompleted ? "Topic completed by you" : "Click once finished studying this concept"}
+          >
+            {completing ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+            ) : isCompleted ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+            ) : (
+              <Check className="h-3.5 w-3.5 text-zinc-400" />
+            )}
+            <span>{isCompleted ? "Completed" : "Mark as Done"}</span>
+          </button>
+
           <button
             type="submit"
-            disabled={!query.trim() || loading}
+            disabled={!query.trim() || loading || historyLoading}
             className="flex items-center justify-center h-9 w-9 rounded-lg bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-30 disabled:hover:bg-orange-500 transition-all shrink-0 active:scale-95 shadow-sm shadow-orange-500/20"
+            title="Send inquiry"
           >
             <Send className="h-3.5 w-3.5" />
           </button>

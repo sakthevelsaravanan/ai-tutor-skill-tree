@@ -2,7 +2,7 @@
 Slide-Grounded Vector RAG Tutoring Pipeline & Graph Traversal Engine.
 
 This module implements the core RAG tutoring logic:
-1. Relational Graph Context: Resolves active concept and queries MySQL 8.0 with a
+1. Relational Graph Context: Resolves active concept and queries PostgreSQL with a
    Recursive Common Table Expression (CTE) to determine valid prerequisite ancestor topics.
 2. Contextual Query Expansion: Automatically expands short or follow-up prompts
    (e.g., "how to solve", "matrix") using previous conversation turn history from MySQL.
@@ -19,8 +19,13 @@ This module implements the core RAG tutoring logic:
 import os
 import re
 from typing import List, Dict, Optional, Any, Tuple
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
+from uuid import UUID
+from backend.config import settings
+from backend.security import current_user
+from backend.routers.sessions import owned_session
+from backend.database import get_transaction
 from backend.database import execute_query, execute_one, execute_dml
 from backend.vector_service import vector_service
 
@@ -28,11 +33,11 @@ router = APIRouter(prefix="/api/tutor", tags=["Slide-Grounded Vector RAG Tutorin
 
 class TutorQueryRequest(BaseModel):
     """Request model for student queries directed to the Socratic RAG tutor."""
-    query: str
+    query: str = Field(min_length=1, max_length=4000)
     subject_id: int
     topic_id: Optional[int] = None
-    session_id: Optional[str] = None
-    user_id: Optional[int] = 3
+    session_id: Optional[UUID] = None
+    user_id: Optional[int] = None
     include_prereqs: bool = True
 
 class TutorQueryResponse(BaseModel):
@@ -41,7 +46,7 @@ class TutorQueryResponse(BaseModel):
     target_topic: Optional[Dict[str, Any]] = None
     prerequisites: List[Dict[str, Any]] = []
     retrieved_chunks: List[Dict[str, Any]] = []
-    session_id: Optional[str] = None
+    session_id: Optional[UUID] = None
     relational_filter_applied: bool = False
     reflection_question: Optional[str] = None
     grounding_excerpt: Optional[str] = None
@@ -50,26 +55,26 @@ class TutorQueryResponse(BaseModel):
 
 def _fetch_prerequisite_chain(topic_id: int) -> List[Dict]:
     """
-    Execute a Recursive Common Table Expression (CTE) in MySQL 8.0 to traverse
+    Execute a Recursive Common Table Expression (CTE) in PostgreSQL to traverse
     the Directed Acyclic Graph (DAG) backwards from target topic to all ancestor prerequisites.
     """
     cte_query = """
         WITH RECURSIVE PrerequisiteChain AS (
-            SELECT 
+            SELECT
                 tp.topic_id AS target_topic_id,
                 tp.prereq_topic_id,
                 t_pre.topic_name AS prereq_topic_name,
                 t_pre.difficulty_level AS prereq_difficulty,
                 tp.importance_weight,
                 1 AS traversal_depth,
-                CAST(t_pre.topic_name AS CHAR(1000)) AS learning_order_path
+                CAST(t_pre.topic_name AS TEXT) AS learning_order_path
             FROM TOPIC_PREREQUISITES tp
             INNER JOIN TOPICS t_pre ON tp.prereq_topic_id = t_pre.topic_id
             WHERE tp.topic_id = %s
 
             UNION ALL
 
-            SELECT 
+            SELECT
                 pc.target_topic_id,
                 tp_parent.prereq_topic_id,
                 t_ancestor.topic_name,
@@ -81,7 +86,7 @@ def _fetch_prerequisite_chain(topic_id: int) -> List[Dict]:
             INNER JOIN TOPIC_PREREQUISITES tp_parent ON pc.prereq_topic_id = tp_parent.topic_id
             INNER JOIN TOPICS t_ancestor ON tp_parent.prereq_topic_id = t_ancestor.topic_id
         )
-        SELECT 
+        SELECT
             prereq_topic_id,
             prereq_topic_name,
             prereq_difficulty,
@@ -105,7 +110,7 @@ def _clean_concept_name(name: Optional[str]) -> str:
 def _clean_chunk_text(raw_text: str, subject_name: str = "") -> str:
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     cleaned_lines = []
-    
+
     noise_patterns = [
         r"^UE\d{2}[A-Z]{2}\d+",
         r"^[A-Z]{2,4}\d{3,4}",
@@ -167,7 +172,7 @@ def _is_contextual_query(q: str) -> bool:
 def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
     q_lower = query.lower()
     is_calc = any(k in q_lower for k in [
-        "encrypt", "decrypt", "calculation", "step by step", "calculate", 
+        "encrypt", "decrypt", "calculation", "step by step", "calculate",
         "find the ciphertext", "compute", "show the calculation"
     ])
     if not is_calc:
@@ -202,8 +207,8 @@ def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
         target_text = text_match.group(1).upper()
     else:
         exclude = {
-            "USING", "THE", "HILL", "CIPHER", "ENCRYPT", "DECRYPT", "WITH", "KEY", 
-            "MATRIX", "SHOW", "CALCULATION", "STEP", "BY", "FIND", "AND", "PLAIN", 
+            "USING", "THE", "HILL", "CIPHER", "ENCRYPT", "DECRYPT", "WITH", "KEY",
+            "MATRIX", "SHOW", "CALCULATION", "STEP", "BY", "FIND", "AND", "PLAIN",
             "TEXT", "CIPHERTEXT", "CODE"
         }
         words = re.findall(r'\b[A-Za-z]{2,12}\b', query)
@@ -222,134 +227,37 @@ def parse_hill_cipher_problem(query: str) -> Optional[Dict[str, Any]]:
         "text": target_text
     }
 
-def solve_hill_cipher(problem: Dict[str, Any]) -> Tuple[str, Optional[str]]:
-    op = problem["operation"]
-    K = problem["matrix"]
-    n = problem["n"]
-    text = problem["text"]
+def solve_hill_cipher(problem: Dict[str, Any]) -> Tuple[str, str]:
+    from math import gcd
+    matrix=problem['matrix']; n=problem['n']; text=problem['text']; op=problem['operation']
+    def determinant(m):
+        if len(m)==1: return m[0][0]
+        return sum((-1)**j*m[0][j]*determinant([row[:j]+row[j+1:] for row in m[1:]]) for j in range(len(m)))
+    det=determinant(matrix)
+    question='Why must the determinant be relatively prime to 26 for unique decryption?'
+    if gcd(det,26)!=1:
+        return f'The determinant is {det}. Since gcd({det}, 26) is not 1, this key does not permit unique decryption.\n\n'+question,question
+    working=matrix
+    if op=='decrypt':
+        inverse=pow(det,-1,26)
+        working=[[(inverse*(-1)**(i+j)*determinant([row[:i]+row[i+1:] for k,row in enumerate(matrix) if k!=j]))%26
+                  for j in range(n)] for i in range(n)]
+        if len(text)%n:
+            return f'Ciphertext length must be a multiple of {n}; please supply the complete ciphertext.',question
+    padded=text+'X'*((-len(text))%n) if op=='encrypt' else text
+    result=[]; steps=[]
+    for i in range(0,len(padded),n):
+        block=padded[i:i+n]; values=[ord(c)-65 for c in block]
+        output=[sum(working[r][c]*values[c] for c in range(n))%26 for r in range(n)]
+        letters=''.join(chr(v+65) for v in output);result.append(letters)
+        steps.append(f'- **{block}**: {values} → {output} → **{letters}**')
+    title='Ciphertext' if op=='encrypt' else 'Decrypted plaintext'
+    answer=f'Using A=0 through Z=25 and column vectors modulo 26. Key determinant: {det}.\n\n'
+    if padded!=text: answer+=f'Pad with X to obtain **{padded}**.\n\n'
+    if op=='decrypt': answer+=f'Inverse key modulo 26: `{working}`.\n\n'
+    answer+='\n'.join(steps)+f'\n\n**{title}: {"".join(result)}**\n\n'+question
+    return answer,question
 
-    if op == "encrypt":
-        pad_len = (n - (len(text) % n)) % n
-        padded_text = text + ("X" * pad_len)
-        letter_vals = [ord(c) - ord('A') for c in padded_text]
-        
-        steps = []
-        steps.append(f"To encrypt the plaintext **{text}** using the Hill cipher ($C = KP \\bmod 26$), follow these steps:\n")
-        steps.append("### Step 1: Convert Plaintext Letters to Numerical Values")
-        steps.append("Using the standard alphabet index ($A=0, B=1, C=2, \\dots, Z=25$):")
-        char_mappings = [f"**{c}** $\\to {ord(c) - ord('A')}$" for c in padded_text]
-        steps.append("- " + ", ".join(char_mappings) + "\n")
-        
-        ciphertext_chars = []
-        
-        for b_idx in range(0, len(padded_text), n):
-            block_chars = padded_text[b_idx:b_idx+n]
-            P = letter_vals[b_idx:b_idx+n]
-            
-            p_vec_str = "\\begin{pmatrix} " + " \\\\ ".join(str(p) for p in P) + " \\end{pmatrix}"
-            k_mat_str = "\\begin{pmatrix} " + " \\\\ ".join(" & ".join(str(v) for v in row) for row in K) + " \\end{pmatrix}"
-            
-            steps.append(f"### Step 2: Form Plaintext Vector and Key Matrix")
-            steps.append(f"Plaintext block **{block_chars}** represented as column vector $P$:\n")
-            steps.append(f"$$P = {p_vec_str}, \\quad K = {k_mat_str}$$\n")
-            
-            steps.append("### Step 3: Perform Matrix Multiplication ($KP$)")
-            kp_calc_lines = []
-            KP = []
-            for i in range(n):
-                mult_terms = [f"{K[i][j]} \\times {P[j]}" for j in range(n)]
-                row_sum = sum(K[i][j] * P[j] for j in range(n))
-                KP.append(row_sum)
-                kp_calc_lines.append(f"\\text{{Row {i+1}}}: " + " + ".join(mult_terms) + f" = {row_sum}")
-            
-            steps.append("Multiply each row of key matrix $K$ by column vector $P$:\n")
-            for line in kp_calc_lines:
-                steps.append(f"- $${line}$$")
-            
-            kp_vec_str = "\\begin{pmatrix} " + " \\\\ ".join(str(val) for val in KP) + " \\end{pmatrix}"
-            steps.append(f"\n$$KP = {kp_vec_str}$$\n")
-            
-            steps.append("### Step 4: Reduce Modulo 26 ($C = KP \\bmod 26$)")
-            C = [val % 26 for val in KP]
-            c_calc_lines = [f"{val} \\bmod 26 = {val % 26}" for val in KP]
-            for line in c_calc_lines:
-                steps.append(f"- $${line}$$")
-                
-            c_vec_str = "\\begin{pmatrix} " + " \\\\ ".join(str(val) for val in C) + " \\end{pmatrix}"
-            steps.append(f"\n$$C = {c_vec_str}$$\n")
-            
-            steps.append("### Step 5: Convert Numbers Back to Ciphertext Letters")
-            block_cipher = "".join(chr(val + ord('A')) for val in C)
-            for val, c_char in zip(C, block_cipher):
-                steps.append(f"- ${val} \\to$ **{c_char}**")
-                
-            ciphertext_chars.append(block_cipher)
-            
-        final_cipher = "".join(ciphertext_chars)
-        steps.append(f"\n**Final Ciphertext**: **{final_cipher}**\n")
-        return "\n".join(steps), "Note: Numerical values are reduced modulo 26 before mapping back to alphabet letters."
-
-    else:
-        if n == 2:
-            a, b = K[0][0], K[0][1]
-            c, d = K[1][0], K[1][1]
-            det = (a * d - b * c) % 26
-            
-            det_inv = None
-            for x in range(1, 26):
-                if (det * x) % 26 == 1:
-                    det_inv = x
-                    break
-                    
-            if det_inv is None:
-                err_msg = (
-                    f"The key matrix $K = \\begin{{pmatrix}} {a} & {b} \\\\ {c} & {d} \\end{{pmatrix}}$ has determinant "
-                    f"$|K| = ({a}\\times{d} - {b}\\times{c}) \\bmod 26 = {det}$.\n\n"
-                    f"Because $\\gcd({det}, 26) \\neq 1$, $|K|$ has no modular inverse modulo 26. "
-                    "Therefore, this key matrix cannot be used for unique decryption."
-                )
-                return err_msg, "Decryption requires gcd(|K|, 26) = 1."
-
-            adj = [[d % 26, (-b) % 26], [(-c) % 26, a % 26]]
-            K_inv = [[(det_inv * adj[i][j]) % 26 for j in range(2)] for i in range(2)]
-
-            pad_len = (2 - (len(text) % 2)) % 2
-            padded_text = text + ("X" * pad_len)
-            c_vals = [ord(ch) - ord('A') for ch in padded_text]
-
-            steps = [
-                f"To decrypt the ciphertext **{text}** using the Hill cipher ($P = K^{{-1}}C \\bmod 26$):\n",
-                "### Step 1: Calculate Determinant and Modular Inverse",
-                f"- Determinant: $|K| = ({a} \\times {d} - {b} \\times {c}) = {a*d - b*c} \\equiv {det} \\pmod{{26}}$",
-                f"- Modular multiplicative inverse: $|K|^{{-1}} \\equiv {det_inv} \\pmod{{26}}$ (since ${det} \\times {det_inv} \\equiv 1 \\pmod{{26}}$)\n",
-                "### Step 2: Compute Inverse Key Matrix ($K^{-1}$)",
-                f"$$K^{{-1}} = {det_inv} \\times \\begin{{pmatrix}} {adj[0][0]} & {adj[0][1]} \\\\ {adj[1][0]} & {adj[1][1]} \\end{{pmatrix}} \\equiv \\begin{{pmatrix}} {K_inv[0][0]} & {K_inv[0][1]} \\\\ {K_inv[1][0]} & {K_inv[1][1]} \\end{{pmatrix}} \\pmod{{26}}$$\n",
-                "### Step 3: Decrypt Ciphertext Vector ($P = K^{-1}C \\bmod 26$)"
-            ]
-
-            plaintext_chars = []
-            for b_idx in range(0, len(padded_text), 2):
-                C_vec = c_vals[b_idx:b_idx+2]
-                P_vals = [
-                    (K_inv[0][0] * C_vec[0] + K_inv[0][1] * C_vec[1]) % 26,
-                    (K_inv[1][0] * C_vec[0] + K_inv[1][1] * C_vec[1]) % 26
-                ]
-                block_plain = "".join(chr(val + ord('A')) for val in P_vals)
-                plaintext_chars.append(block_plain)
-                steps.append(f"- Block **{padded_text[b_idx:b_idx+2]}** (${C_vec[0]}, {C_vec[1]}$) $\\to$ (${P_vals[0]}, {P_vals[1]}$) $\\to$ **{block_plain}**")
-
-            final_plain = "".join(plaintext_chars)
-            steps.append(f"\n**Decrypted Plaintext**: **{final_plain}**\n")
-            return "\n".join(steps), "Decryption requires gcd(|K|, 26) = 1."
-        else:
-            steps = [
-                f"Decryption in the Hill cipher computes $P = K^{{-1}}C \\bmod 26$, where $K^{{-1}} = \\text{{adj}}(K) \\cdot |K|^{{-1}} \\bmod 26$.\n"
-            ]
-            return "\n".join(steps), "Decryption requires gcd(|K|, 26) = 1."
-
-# ==============================================================================
-# Slide-Grounded Vector Extraction & Synthesis
-# ==============================================================================
 
 def _extract_slide_topics_and_definitions(
     chunks: List[Dict],
@@ -467,7 +375,7 @@ def _synthesize_slide_rag_answer(
     selected_slides = content_slides[:4] if content_slides else parsed_slides[:4]
 
     output_blocks = []
-    
+
     q_lower = query.lower()
     is_solve_or_calc = any(k in q_lower for k in [
         "how to solve", "calculate", "solve", "step", "formula", "example",
@@ -482,7 +390,7 @@ def _synthesize_slide_rag_answer(
     for item in selected_slides:
         sim_pct = f"{round(item['similarity'] * 100, 1)}%"
         page_ref = f"Slide Page {item['page']}" if item['page'] != "N/A" else item['file']
-        
+
         block_lines = []
         block_lines.append(f"#### **{item['title']}** `(Match: {sim_pct} · {page_ref})`")
 
@@ -520,15 +428,14 @@ def _synthesize_slide_rag_answer(
 # Main Tutor API Endpoint
 # ==============================================================================
 
-@router.post("/query", response_model=TutorQueryResponse)
-def socratic_tutor_query(req: TutorQueryRequest):
+def _build_tutor_response(req: TutorQueryRequest):
     """
     Primary Socratic RAG Tutoring Endpoint.
 
     Algorithmic Workflow:
     1. Relational Validation: Confirms subject existence in SUBJECTS table.
     2. Hierarchical Prerequisite Graph Traversal: If topic_id is specified, executes
-       MySQL 8.0 Recursive CTE to retrieve all prerequisite ancestor topics.
+       PostgreSQL Recursive CTE to retrieve all prerequisite ancestor topics.
     3. Deterministic Cryptographic Math Detection: If prompt contains a matrix problem
        (e.g., Hill Cipher encryption or decryption), evaluates it deterministically with
        step-by-step modular linear algebra ($C = KP \\bmod 26$, modular inverse).
@@ -560,10 +467,7 @@ def socratic_tutor_query(req: TutorQueryRequest):
             (req.topic_id, req.subject_id)
         )
         if not target_topic:
-            target_topic = execute_one(
-                "SELECT topic_id, topic_name, difficulty_level, visual_type FROM TOPICS WHERE subject_id = %s ORDER BY topic_id ASC LIMIT 1",
-                (req.subject_id,)
-            )
+            raise HTTPException(400,'Topic does not belong to this subject.')
 
         if target_topic:
             prereqs = _fetch_prerequisite_chain(target_topic["topic_id"])
@@ -658,6 +562,8 @@ def socratic_tutor_query(req: TutorQueryRequest):
             n_results=candidate_limit
         )
 
+    raw_chunks = [c for c in raw_chunks if c.get("similarity", 0) >= 0.22]
+
     # 5. Extract topics and definitions from slide chunks
     parsed_slides = _extract_slide_topics_and_definitions(raw_chunks, subject_name=subject_name)
 
@@ -666,11 +572,11 @@ def socratic_tutor_query(req: TutorQueryRequest):
     grounding_excerpt = _clean_chunk_text(raw_chunks[0]["document"], subject_name=subject_name)[:300] if raw_chunks else None
 
     # 6. Check if external LLM key is configured (Groq / Gemini)
-    groq_api_key = os.getenv("GROQ_API_KEY")
+    groq_api_key = settings.GROQ_API_KEY
     if groq_api_key and raw_chunks:
         try:
             from groq import Groq
-            client = Groq(api_key=groq_api_key)
+            client = Groq(api_key=groq_api_key, timeout=30, max_retries=1)
             context_text = "\n\n".join([
                 f"[{c.get('metadata', {}).get('file_name', 'Slide')} Page {c.get('metadata', {}).get('page_number', 'N/A')}]: {_clean_chunk_text(c['document'], subject_name=subject_name)}"
                 for c in raw_chunks[:4]
@@ -715,27 +621,13 @@ Instructions:
         except Exception:
             pass
 
-    # 7. Local Vector-Driven Slide Synthesis (Pure Dynamic RAG, Zero Hardcoded Crap, Zero "Think about this")
+    # 7. Local Vector-Driven Slide Synthesis (Pure Dynamic RAG, No domain-specific templates, Zero "Think about this")
     answer = _synthesize_slide_rag_answer(
         query=req.query,
         parsed_slides=parsed_slides,
         subject_name=subject_name,
         clean_topic=clean_concept
     )
-
-    # 8. Relational Session Persistence (CONVERSATION_LOGS)
-    if req.session_id:
-        try:
-            execute_dml(
-                "INSERT INTO CONVERSATION_LOGS (session_id, topic_id, role, stage, content) VALUES (%s, %s, 'user', 'explore', %s)",
-                (req.session_id, req.topic_id, req.query)
-            )
-            execute_dml(
-                "INSERT INTO CONVERSATION_LOGS (session_id, topic_id, role, stage, content) VALUES (%s, %s, 'assistant', 'explore', %s)",
-                (req.session_id, req.topic_id, answer)
-            )
-        except Exception:
-            pass
 
     return TutorQueryResponse(
         answer=answer,
@@ -749,3 +641,24 @@ Instructions:
         top_similarity=top_sim,
         top_source=top_src
     )
+
+
+@router.post('/query',response_model=TutorQueryResponse)
+def socratic_tutor_query(req:TutorQueryRequest,user=Depends(current_user)):
+    if not req.query.strip(): raise HTTPException(422,'Enter a question.')
+    if req.user_id is not None and req.user_id != user['user_id']:
+        raise HTTPException(403,'User identity must match the signed-in account.')
+    if req.session_id:
+        session=owned_session(req.session_id,user)
+        if session['subject_id'] != req.subject_id:
+            raise HTTPException(400,'Session does not belong to this subject.')
+    result=_build_tutor_response(req)
+    if req.session_id:
+        with get_transaction() as conn:
+            session=owned_session(req.session_id,user,conn)
+            topic_id=result.target_topic['topic_id'] if result.target_topic else session['current_topic_id']
+            conn.execute("UPDATE learning_sessions SET current_stage='explore',current_topic_id=%s WHERE session_id=%s",(topic_id,req.session_id))
+            with conn.cursor() as cursor:
+                cursor.executemany("INSERT INTO conversation_logs(session_id,topic_id,role,stage,content) VALUES(%s,%s,%s,'explore',%s)",
+                    [(req.session_id,topic_id,'user',req.query),(req.session_id,topic_id,'assistant',result.answer)])
+    return result

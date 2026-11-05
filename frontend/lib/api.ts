@@ -7,6 +7,7 @@
  * 3. ChromaDB Vector RUD: Semantic vector search, chunk creation, editing, deletion, and admin collection purge.
  * 4. Socratic RAG Tutor: Slide-grounded vector queries with relational prerequisite filtering.
  * 5. Learning Sessions & Mastery: Dialogue turn logging, quiz evaluations, and stored procedure recommendations.
+ * 6. Topic Completion Tracking: Persists and fetches manual student topic completions.
  */
 
 import {
@@ -25,21 +26,18 @@ import {
   TutorQueryResponse,
   LearningSession,
   ConversationMessage,
-  RecommendationResponse,
-  SubjectMasteryResponse,
   SessionStage,
+  TopicCompletionStatus,
+  UserCompletedTopicsResponse,
 } from "./types";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL !== undefined && process.env.NEXT_PUBLIC_API_URL !== ""
-    ? process.env.NEXT_PUBLIC_API_URL
-    : typeof window !== "undefined"
-    ? `http://${window.location.hostname}:8000`
-    : "http://127.0.0.1:8000";
+// Same-origin requests use Next.js rewrites and HttpOnly session cookies.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
   const res = await fetch(url, {
+    credentials: "include",
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -51,10 +49,11 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     let errorDetail = "Request failed";
     try {
       const errJson = await res.json();
-      errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
+      errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail || errJson);
     } catch {
       errorDetail = `${res.status} ${res.statusText}`;
     }
+    if (res.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("auth-expired"));
     throw new Error(errorDetail);
   }
 
@@ -62,6 +61,13 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  me: () => request<User>("/api/auth/me"),
+  logout: () => request("/api/auth/logout", { method: "POST" }),
+  health: () => request<{status: string; database: string}>("/api/health"),
+  startSession: (userId: number, subjectId: number, topicId?: number) => request<{session_id: string}>("/api/sessions/start", {method: "POST", body: JSON.stringify({user_id: userId, subject_id: subjectId, current_topic_id: topicId})}),
+  getSessions: (userId: number, subjectId: number) => request<Array<{session_id: string}>>(`/api/sessions/user/${userId}?subject_id=${subjectId}`),
+  getSession: (id: string) => request<{current_topic_id: number; messages: Array<{log_id: number; role: "user" | "assistant"; content: string; created_at: string}>}>(`/api/sessions/${id}`),
+
   getRoles: () => request<RolesPermissions>("/api/auth/roles"),
   getUsers: () => request<User[]>("/api/auth/users"),
   login: (email: string, password: string) =>
@@ -89,8 +95,8 @@ export const api = {
   getCollections: () => request<CollectionItem[]>("/api/vector/collections"),
   getCollectionStats: (subjectKey: string) =>
     request<CollectionStats>(`/api/vector/stats/${subjectKey}`),
-  getChunks: (subjectKey: string) =>
-    request<VectorChunk[]>(`/api/vector/chunks/${subjectKey}`),
+  getChunks: (subjectKey: string, offset: number = 0, limit: number = 200) =>
+    request<VectorChunk[]>(`/api/vector/chunks/${subjectKey}?offset=${offset}&limit=${limit}`),
   searchVectors: (subjectKey: string, query: string, topK: number = 4) =>
     request<{ subject: string; query: string; total_results: number; results: VectorSearchResult[] }>(
       "/api/vector/search",
@@ -122,25 +128,26 @@ export const api = {
   clearCollection: (subjectKey: string, role?: string, userId?: number) =>
     request<{ status: string; deleted_count: number; message: string }>("/api/vector/clear-collection", {
       method: "POST",
-      body: JSON.stringify({ subject_key: subjectKey, role: role || "admin", user_id: userId }),
+      body: JSON.stringify({ subject_key: subjectKey }),
     }),
   clearAllVectors: (role?: string, userId?: number) =>
     request<{ status: string; total_chunks_deleted: number; collections_cleared: string[]; message: string }>(
       "/api/vector/clear-all",
       {
         method: "POST",
-        body: JSON.stringify({ role: role || "admin", user_id: userId, confirm: true }),
+        body: JSON.stringify({ confirm: true }),
       }
     ),
   deleteCourse: (subjectId: number, role?: string, userId?: number) =>
     request<{ status: string; deleted_subject_id: number; deleted_subject_name: string; message: string }>(
-      `/api/vector/course/${subjectId}?role=${role || "admin"}&user_id=${userId || 6}`,
+      `/api/vector/course/${subjectId}`,
       { method: "DELETE" }
     ),
   uploadPdf: async (formData: FormData) => {
     const res = await fetch(`${API_BASE}/api/vector/upload`, {
       method: "POST",
       body: formData,
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "Upload failed" }));
@@ -152,6 +159,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/vector/upload`, {
       method: "POST",
       body: formData,
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "Upload failed" }));
@@ -169,7 +177,7 @@ export const api = {
   // Member 2: Learning Session, Quiz & Mastery Client APIs (M2-APP1 & M2-APP2)
   // ============================================================
 
-  startSession: (
+  createLearningSession: (
     userId: number,
     subjectId: number,
     currentTopicId?: number | null,
@@ -203,16 +211,45 @@ export const api = {
       }),
     }),
 
-  getRecommendedTopic: (userId: number, subjectId: number) =>
-    request<RecommendationResponse>(`/api/sessions/recommend/${userId}/${subjectId}`),
-
-  getSubjectMastery: (userId: number, subjectId: number) =>
-    request<SubjectMasteryResponse>(`/api/sessions/mastery/${userId}/${subjectId}`),
-
   getUserSessions: (userId: number) =>
     request<LearningSession[]>(`/api/sessions/user/${userId}`),
 
   getSessionDetails: (sessionId: string) =>
     request<LearningSession>(`/api/sessions/${sessionId}`),
-};
 
+  // ============================================================
+  // Topic Completion Tracking APIs
+  // ============================================================
+
+  markTopicComplete: (topicId: number, userId: number) =>
+    request<{
+      status: string;
+      message: string;
+      topic_id: number;
+      user_id: number;
+      is_completed: boolean;
+      completed_at?: string;
+    }>(`/api/curriculum/topics/${topicId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+
+  unmarkTopicComplete: (topicId: number, userId: number) =>
+    request<{
+      status: string;
+      message: string;
+      topic_id: number;
+      user_id: number;
+      is_completed: boolean;
+    }>(`/api/curriculum/topics/${topicId}/complete?user_id=${userId}`, {
+      method: "DELETE",
+    }),
+
+  getCompletedTopics: (userId: number, subjectId?: number) => {
+    const q = subjectId !== undefined && subjectId !== null ? `?subject_id=${subjectId}` : "";
+    return request<UserCompletedTopicsResponse>(`/api/curriculum/completed/${userId}${q}`);
+  },
+
+  getTopicCompletionStatus: (topicId: number, userId: number) =>
+    request<TopicCompletionStatus>(`/api/curriculum/topics/${topicId}/status/${userId}`),
+};

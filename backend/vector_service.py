@@ -202,13 +202,13 @@ class VectorStoreService:
         cols = self.client.list_collections()
         return [{"name": c.name, "count": c.count()} for c in cols]
 
-    def get_chunks(self, subject_key: str, limit: int = 50) -> List[Dict]:
+    def get_chunks(self, subject_key: str, limit: int = 50, offset: int = 0) -> List[Dict]:
         col_name = self._get_collection_name(subject_key)
         try:
             col = self.client.get_collection(col_name)
         except Exception:
             return []
-        res = col.get(limit=limit)
+        res = col.get(limit=limit, offset=offset)
         items = []
         if res and res.get("documents"):
             docs = res["documents"]

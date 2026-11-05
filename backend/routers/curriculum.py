@@ -13,12 +13,18 @@ This module provides endpoints for course structures and prerequisite graph trav
 5. Skill Tree DAG Synthesis (/graph/{subject_id}):
    Supplies node attributes (difficulty, visual type) and weighted directed edges
    to drive the frontend Directed Acyclic Graph (DAG) interactive visualization.
+6. Topic Completion Tracking (/topics/{topic_id}/complete, /completed/{user_id}):
+   Allows authenticated students to manually mark topics as completed after learning them
+   in the Socratic AI chatbox. Persists completion status with unique constraint.
 """
 
-from fastapi import APIRouter, HTTPException
-from backend.database import execute_query, execute_one
+from typing import Optional, List
+from fastapi import APIRouter, HTTPException, Query, Depends
+from pydantic import BaseModel
+from backend.database import execute_query, execute_one, execute_dml, get_transaction
+from backend.security import current_user, require_owner
 
-router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"])
+router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"], dependencies=[Depends(current_user)])
 
 @router.get("/subjects")
 def get_subjects():
@@ -54,10 +60,10 @@ def get_topics_by_subject(subject_id: int):
             topic_name,
             difficulty_level,
             visual_type,
-            embed_url
+            embed_url, source_file, start_page, end_page, sort_order
         FROM TOPICS
         WHERE subject_id = %s
-        ORDER BY difficulty_level ASC, topic_id ASC
+        ORDER BY sort_order ASC, topic_id ASC
     """, (subject_id,))
 
 @router.get("/prerequisites/{topic_id}")
@@ -83,7 +89,7 @@ def get_topic_prerequisite_tree(topic_id: int):
                 t_pre.difficulty_level AS prereq_difficulty,
                 tp.importance_weight,
                 1 AS traversal_depth,
-                CAST(t_pre.topic_name AS CHAR(1000)) AS learning_order_path
+                CAST(t_pre.topic_name AS TEXT) AS learning_order_path
             FROM TOPIC_PREREQUISITES tp
             INNER JOIN TOPICS t_pre ON tp.prereq_topic_id = t_pre.topic_id
             WHERE tp.topic_id = %s
@@ -172,16 +178,16 @@ def get_subject_graph(subject_id: int):
     - edges: Array of directed dependencies { source: prereq_id, target: topic_id, weight }.
     """
     nodes = execute_query("""
-        SELECT topic_id AS id, topic_name AS label, difficulty_level, visual_type
+        SELECT topic_id AS id, topic_name AS label, difficulty_level, visual_type, source_file, start_page, end_page, sort_order
         FROM TOPICS
-        WHERE subject_id = %s
+        WHERE subject_id = %s ORDER BY sort_order, topic_id
     """, (subject_id,))
 
     edges = execute_query("""
         SELECT 
-            tp.prereq_topic_id AS `source`,
-            tp.topic_id AS `target`,
-            tp.importance_weight AS `weight`
+            tp.prereq_topic_id AS source,
+            tp.topic_id AS target,
+            tp.importance_weight AS weight, tp.basis
         FROM TOPIC_PREREQUISITES tp
         INNER JOIN TOPICS t ON tp.topic_id = t.topic_id
         WHERE t.subject_id = %s
@@ -201,3 +207,140 @@ def get_visual_config(topic_id: int):
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
     return topic
+
+
+# ============================================================
+# Manual Topic Completion Tracking
+# ============================================================
+
+class TopicCompletionRequest(BaseModel):
+    user_id: int
+
+class TopicCompletionResponse(BaseModel):
+    status: str
+    message: str
+    topic_id: int
+    user_id: int
+    is_completed: bool
+    completed_at: Optional[str] = None
+
+class UserCompletedTopicsResponse(BaseModel):
+    user_id: int
+    completed_topic_ids: List[int]
+    total_completed: int
+
+class TopicStatusResponse(BaseModel):
+    topic_id: int
+    user_id: int
+    is_completed: bool
+    completed_at: Optional[str] = None
+
+@router.post("/topics/{topic_id}/complete", response_model=TopicCompletionResponse)
+def mark_topic_completed(topic_id: int, req: TopicCompletionRequest, actor=Depends(current_user)):
+    require_owner(actor, req.user_id)
+    """
+    Manually marks a specific topic as completed for the authenticated student.
+    Persists completion in PostgreSQL in STUDENT_TOPIC_COMPLETIONS.
+    Prevents duplicate completion records and ensures user isolation.
+    """
+    # 1. Verify user exists
+    user = execute_one("SELECT user_id, full_name, role FROM USERS WHERE user_id = %s", (req.user_id,))
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with ID {req.user_id} not found.")
+    if user.get("role") != "student":
+        raise HTTPException(status_code=403, detail="Only students can mark topics as completed.")
+
+    # 2. Verify topic exists
+    topic = execute_one("SELECT topic_id, topic_name, subject_id FROM TOPICS WHERE topic_id = %s", (topic_id,))
+    if not topic:
+        raise HTTPException(status_code=404, detail=f"Topic with ID {topic_id} not found.")
+
+    with get_transaction() as conn:
+        inserted=conn.execute("INSERT INTO student_topic_completions(user_id,topic_id) VALUES(%s,%s) ON CONFLICT(user_id,topic_id) DO NOTHING RETURNING completed_at", (req.user_id,topic_id)).fetchone()
+        created=inserted or conn.execute("SELECT completed_at FROM student_topic_completions WHERE user_id=%s AND topic_id=%s",(req.user_id,topic_id)).fetchone()
+    return TopicCompletionResponse(status='success',message='Topic marked as completed!' if inserted else 'Topic is already marked as completed.',topic_id=topic_id,user_id=req.user_id,is_completed=True,completed_at=created['completed_at'].isoformat())
+
+@router.delete("/topics/{topic_id}/complete", response_model=TopicCompletionResponse)
+def unmark_topic_completed(topic_id: int, user_id: int = Query(...), actor=Depends(current_user)):
+    require_owner(actor, user_id)
+    """
+    Optionally unmarks a completed topic for the authenticated student.
+    """
+    execute_dml(
+        "DELETE FROM STUDENT_TOPIC_COMPLETIONS WHERE user_id = %s AND topic_id = %s",
+        (user_id, topic_id)
+    )
+    return TopicCompletionResponse(
+        status="success",
+        message="Topic completion removed.",
+        topic_id=topic_id,
+        user_id=user_id,
+        is_completed=False,
+        completed_at=None
+    )
+
+@router.get("/completed/{user_id}", response_model=UserCompletedTopicsResponse)
+def get_user_completed_topics(user_id: int, subject_id: Optional[int] = None, actor=Depends(current_user)):
+    require_owner(actor, user_id)
+    """
+    Retrieves the list of completed topic IDs for a given student user.
+    Optionally filtered by subject_id.
+    """
+    user = execute_one("SELECT user_id FROM USERS WHERE user_id = %s", (user_id,))
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found.")
+
+    if subject_id is not None:
+        rows = execute_query("""
+            SELECT c.topic_id
+            FROM STUDENT_TOPIC_COMPLETIONS c
+            INNER JOIN TOPICS t ON c.topic_id = t.topic_id
+            WHERE c.user_id = %s AND t.subject_id = %s
+            ORDER BY c.completed_at DESC
+        """, (user_id, subject_id))
+    else:
+        rows = execute_query("""
+            SELECT topic_id
+            FROM STUDENT_TOPIC_COMPLETIONS
+            WHERE user_id = %s
+            ORDER BY completed_at DESC
+        """, (user_id,))
+
+    completed_ids = [r["topic_id"] for r in rows]
+    return UserCompletedTopicsResponse(
+        user_id=user_id,
+        completed_topic_ids=completed_ids,
+        total_completed=len(completed_ids)
+    )
+
+@router.get("/topics/{topic_id}/status/{user_id}", response_model=TopicStatusResponse)
+def get_topic_completion_status(topic_id: int, user_id: int, actor=Depends(current_user)):
+    require_owner(actor, user_id)
+    """
+    Fetches the completion status of a single topic for a given student.
+    """
+    if not execute_one("SELECT user_id FROM USERS WHERE user_id = %s", (user_id,)):
+        raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found.")
+    if not execute_one("SELECT topic_id FROM TOPICS WHERE topic_id = %s", (topic_id,)):
+        raise HTTPException(status_code=404, detail=f"Topic with ID {topic_id} not found.")
+
+    row = execute_one(
+        "SELECT completion_id, completed_at FROM STUDENT_TOPIC_COMPLETIONS WHERE user_id = %s AND topic_id = %s",
+        (user_id, topic_id)
+    )
+    if not row:
+        return TopicStatusResponse(
+            topic_id=topic_id,
+            user_id=user_id,
+            is_completed=False,
+            completed_at=None
+        )
+
+    raw_at = row.get("completed_at")
+    completed_at_str = raw_at.isoformat() if hasattr(raw_at, "isoformat") else (str(raw_at) if raw_at else None)
+    return TopicStatusResponse(
+        topic_id=topic_id,
+        user_id=user_id,
+        is_completed=True,
+        completed_at=completed_at_str
+    )

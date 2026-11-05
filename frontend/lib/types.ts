@@ -54,6 +54,10 @@ export interface UnlockedTopicItem {
 }
 
 export interface GraphNode {
+  source_file?: string;
+  start_page?: number;
+  end_page?: number;
+  sort_order?: number;
   id: number;
   label: string;
   difficulty_level: number;
@@ -61,6 +65,7 @@ export interface GraphNode {
 }
 
 export interface GraphEdge {
+  basis?: "curated" | "book_order";
   source: number;
   target: number;
   weight: number;
@@ -178,3 +183,19 @@ export interface SubjectMasteryResponse {
   needs_review_count?: number | null;
 }
 
+// ============================================================
+// Manual Topic Completion Tracking Types
+// ============================================================
+
+export interface TopicCompletionStatus {
+  topic_id: number;
+  user_id: number;
+  is_completed: boolean;
+  completed_at?: string | null;
+}
+
+export interface UserCompletedTopicsResponse {
+  user_id: number;
+  completed_topic_ids: number[];
+  total_completed: number;
+}

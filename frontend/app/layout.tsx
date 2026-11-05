@@ -3,8 +3,8 @@ import "katex/dist/katex.min.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Tutor & Skill Tree | STEM Curriculum & Vector Knowledge Base",
-  description: "Relational curriculum skill trees paired with ChromaDB semantic vector search and Socratic AI tutoring",
+  title: "Chapter1 | STEM Curriculum & Vector Knowledge Base",
+  description: "Relational curriculum skill trees paired with ChromaDB semantic vector search and Socratic STEM tutoring",
 };
 
 export default function RootLayout({

@@ -3,7 +3,6 @@
 import React, { useState } from "react";
 import { Subject, User } from "@/lib/types";
 import { api } from "@/lib/api";
-import { CustomDropdown } from "@/components/CustomDropdown";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import {
   UploadCloud,
@@ -61,7 +60,6 @@ export function DocumentUpload({
   });
   const [deleting, setDeleting] = useState<boolean>(false);
   const [courseName, setCourseName] = useState<string>("");
-  const [classification, setClassification] = useState<string>("Computer Science & Engineering");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<{
@@ -73,17 +71,6 @@ export function DocumentUpload({
     collection: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const academicFields = [
-    "Computer Science & Engineering",
-    "Data Science & Artificial Intelligence",
-    "Electrical & Electronics Engineering",
-    "Mathematics & Statistics",
-    "Physics & Applied Sciences",
-    "Mechanical & Aerospace Engineering",
-    "Biomedical Engineering",
-    "General STEM",
-  ];
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -117,8 +104,7 @@ export function DocumentUpload({
     const formData = new FormData();
     formData.append("file", file);
     formData.append("subject_name", courseName.trim());
-    formData.append("classification", classification);
-    formData.append("uploaded_by", "1");
+
 
     try {
       const data = await api.uploadDocument(formData);
@@ -126,9 +112,9 @@ export function DocumentUpload({
         subject_id: data.subject_id,
         subject_key: data.subject_key || `sub_${data.subject_id}`,
         subject_name: data.subject_name || courseName.trim(),
-        description: `Classification: ${classification}. Course curriculum.`,
+        description: "Course materials",
         is_indexed: true,
-        total_topics: 4,
+        total_topics: 0,
         total_textbooks: 1,
       };
 
@@ -147,30 +133,6 @@ export function DocumentUpload({
       setHasDocument(true);
       setFile(null);
     } catch (err: any) {
-      // Auto-recovery: check if backend completed indexing before fetch returned
-      try {
-        const fresh = await api.getSubjects();
-        const match = fresh.find(
-          (s) =>
-            s.subject_name.toLowerCase() === courseName.trim().toLowerCase() ||
-            s.subject_key.toLowerCase() === courseName.trim().toLowerCase()
-        );
-        if (match) {
-          if (onSubjectCreated) onSubjectCreated(match);
-          onSubjectChange(match.subject_id);
-          setHasDocument(true);
-          setResult({
-            subject_id: match.subject_id,
-            subject_name: match.subject_name,
-            file_name: file?.name || "Uploaded Document",
-            pages_parsed: 1,
-            chunks_indexed: match.total_topics || 4,
-            collection: `chroma_${match.subject_key}`,
-          });
-          return;
-        }
-      } catch (_) {}
-
       setError(err.message || "Document indexing and course generation failed.");
     } finally {
       setLoading(false);
@@ -195,14 +157,18 @@ export function DocumentUpload({
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-2 sm:py-3 space-y-4">
+    <div className="w-full min-w-0 space-y-4">
       {/* Pristine Clean Header */}
-      <div className="text-center space-y-1.5">
-        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">
+      <div className="space-y-2">
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-950/40 border border-orange-800/60 text-xs font-mono text-orange-400">
+          <Sparkles className="h-3.5 w-3.5" />
+          <span>Course library</span>
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
           Ingest Course Materials
         </h1>
-        <p className="text-xs text-zinc-400 max-w-lg mx-auto leading-relaxed">
-          Upload any STEM textbook, syllabus, or lecture notes. The system dynamically builds the relational skill tree and vectorizes chunks into ChromaDB.
+        <p className="text-sm text-zinc-400 leading-relaxed">
+          Upload a textbook, syllabus, or lecture notes to build your course and start learning.
         </p>
       </div>
 
@@ -212,12 +178,12 @@ export function DocumentUpload({
           <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
             <div className="flex items-center gap-2.5 text-orange-400 text-sm font-semibold">
               <CheckCircle2 className="h-5 w-5" />
-              <span>Course Registered & Relational DAG Generated</span>
+              <span>Course ready</span>
             </div>
             <button
               onClick={() => {
                 setResult(null);
-                setHasDocument(false);
+                setHasDocument(subjects.some(s => !!s.is_indexed));
                 setCourseName("");
                 setFile(null);
               }}
@@ -253,7 +219,7 @@ export function DocumentUpload({
               className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white py-3 px-5 text-xs font-semibold transition shadow-md shadow-orange-500/25 active:scale-[0.98]"
             >
               <GitFork className="h-4 w-4" />
-              <span>Step 2: Explore Prerequisite Skill Tree (DAG) →</span>
+              <span>Explore skill tree</span>
             </button>
 
             <button
@@ -261,33 +227,33 @@ export function DocumentUpload({
               className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 py-3 px-5 text-xs font-semibold transition active:scale-[0.98]"
             >
               <MessageSquare className="h-4 w-4 text-orange-400" />
-              <span>Step 3: Launch Socratic AI Tutor Chat →</span>
+              <span>Open tutor</span>
             </button>
           </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="course-workspace grid gap-4 items-start">
           {/* Quick Selector for Already-Ingested Courses */}
           {(() => {
             const indexedSubjects = subjects.filter((s) => s.is_indexed);
             if (indexedSubjects.length === 0) return null;
             return (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
-                <div className="flex items-center justify-between">
+              <div className="course-library min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+                <div className="space-y-1">
                   <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
                     Ready Courses ({indexedSubjects.length})
                   </span>
-                  <span className="text-[11px] text-zinc-500">
+                  <span className="block text-xs text-zinc-500">
                     Select an indexed course to open its skill tree
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-2.5">
+                <div className="flex flex-col gap-2.5 max-h-[50dvh] overflow-y-auto">
                   {indexedSubjects.map((sub) => {
                     const isSelected = sub.subject_id === activeSubjectId;
                     return (
                       <div
                         key={sub.subject_id}
-                        className={`inline-flex items-center rounded-lg border transition ${
+                        className={`flex min-w-0 items-center justify-between rounded-lg border transition ${
                           isSelected
                             ? "bg-orange-950/50 border-orange-500/70 text-orange-300 shadow-sm shadow-orange-500/10"
                             : "bg-zinc-900/60 border-zinc-800 hover:border-zinc-700 text-zinc-200"
@@ -300,10 +266,10 @@ export function DocumentUpload({
                             setHasDocument(true);
                             onProceedToSkillTree();
                           }}
-                          className="flex items-center gap-2 px-3.5 py-2 text-xs font-medium focus:outline-none"
+                          className="flex min-w-0 items-center gap-2 px-3 py-2 text-xs text-left font-medium focus:outline-none"
                         >
                           <span className="h-2 w-2 rounded-full bg-orange-500" />
-                          <span className="font-semibold">{sub.subject_name}</span>
+                          <span className="font-semibold break-words">{sub.subject_name}</span>
                           <ArrowRight className="h-3 w-3 text-orange-400 opacity-70 ml-0.5" />
                         </button>
 
@@ -335,13 +301,13 @@ export function DocumentUpload({
           })()}
 
           {/* Document Input Form with Custom Name & Classification */}
-          <form onSubmit={handleUpload} className="space-y-6 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-6 sm:p-8">
+          <form onSubmit={handleUpload} className="course-form min-w-0 space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
           {/* 1. Drag and Drop File Zone */}
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-              1. Select Course Document (PDF, TXT, MD)
+              Document (PDF, TXT, MD)
             </label>
-            <div className="border-2 border-dashed border-zinc-800 hover:border-orange-500/60 rounded-2xl p-8 text-center transition bg-zinc-900/40 group">
+            <div className="border-2 border-dashed border-zinc-800 hover:border-orange-500/60 rounded-xl p-5 text-center transition bg-zinc-900/40 group">
               <input
                 id="doc-file-input"
                 type="file"
@@ -357,7 +323,7 @@ export function DocumentUpload({
                   <span className="text-xs font-semibold text-zinc-200 group-hover:text-orange-400 transition underline">
                     Click to select document file
                   </span>
-                  <span className="text-xs text-zinc-500"> or drag and drop</span>
+                  <span className="text-xs text-zinc-500"></span>
                 </div>
                 <p className="text-[11px] font-mono text-zinc-500">
                   Accepts textbook PDFs, syllabus files, and markdown lecture notes
@@ -365,23 +331,25 @@ export function DocumentUpload({
               </label>
 
               {file && (
-                <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-950/40 border border-orange-800/60 text-xs text-orange-300 font-mono">
+                <div className="mt-3 flex flex-wrap justify-center items-center gap-2 break-all px-3 py-1.5 rounded-lg bg-orange-950/40 border border-orange-800/60 text-xs text-orange-300 font-mono">
                   <FileText className="h-3.5 w-3.5 text-orange-400" />
                   <span>{file.name}</span>
-                  <span className="text-zinc-500">({(file.size / 1024).toFixed(1)} KB)</span>
+                  <span className="text-zinc-500">({(file.size / (1024 * 1024)).toFixed(1)} MB)</span>
                 </div>
               )}
             </div>
           </div>
 
           {/* 2. Custom Course Name & Classification */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                2. Course / Subject Name
+              <label htmlFor="course-name" className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                Course name
               </label>
               <input
+                id="course-name"
                 type="text"
+                maxLength={100}
                 value={courseName}
                 onChange={(e) => setCourseName(e.target.value)}
                 placeholder="e.g. Linear Algebra, DBMS, Quantum Physics"
@@ -390,17 +358,7 @@ export function DocumentUpload({
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                3. Academic Classification / Field
-              </label>
-              <CustomDropdown
-                value={classification}
-                onChange={setClassification}
-                options={academicFields}
-                placeholder="Select academic discipline..."
-              />
-            </div>
+
           </div>
 
           {/* Submit Action */}
@@ -412,12 +370,12 @@ export function DocumentUpload({
             {loading ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin" />
-                <span>Vectorizing Chunks & Generating Relational Skill Tree...</span>
+                <span>Processing document in batches. Large books may take several minutes...</span>
               </>
             ) : (
               <>
                 <Database className="h-4 w-4" />
-                <span>Ingest Document & Build Relational Skill Tree</span>
+                <span>Upload & build course</span>
               </>
             )}
           </button>

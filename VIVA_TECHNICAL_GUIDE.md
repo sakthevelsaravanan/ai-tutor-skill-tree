@@ -10,7 +10,7 @@ This guide provides an end-to-end technical explanation of every component, algo
 flowchart TD
     User["Student / Instructor / Admin"] -->|Browser UI| Frontend["Next.js 14 Web Application\n(Port 3000)"]
     Frontend -->|Typed HTTP REST API| Backend["FastAPI REST Backend\n(Port 8000)"]
-    
+
     Backend -->|SQL CRUD / Recursive CTE| MySQL[("MySQL 8.0 Database\n(InnoDB Engine)")]
     Backend -->|Cosine Similarity / HNSW| Chroma[("ChromaDB Vector Store\n(Persistent Embedding Store)")]
 
@@ -50,13 +50,13 @@ flowchart TD
 ---
 
 ### 2.2 Recursive Common Table Expression 1: Ancestor Walk (Prerequisites)
-**Endpoint**: `GET /api/curriculum/prerequisites/{topic_id}`  
+**Endpoint**: `GET /api/curriculum/prerequisites/{topic_id}`
 **Purpose**: Traverses the prerequisite DAG backwards from a target topic to retrieve all direct and transitive ancestor prerequisites in topological order.
 
 ```sql
 WITH RECURSIVE PrerequisiteChain AS (
     -- Anchor Member: Immediate direct prerequisites
-    SELECT 
+    SELECT
         tp.topic_id AS target_topic_id,
         tp.prereq_topic_id,
         t_pre.topic_name AS prereq_topic_name,
@@ -71,7 +71,7 @@ WITH RECURSIVE PrerequisiteChain AS (
     UNION ALL
 
     -- Recursive Member: Transitive ancestor prerequisites
-    SELECT 
+    SELECT
         pc.target_topic_id,
         tp_parent.prereq_topic_id,
         t_ancestor.topic_name,
@@ -83,7 +83,7 @@ WITH RECURSIVE PrerequisiteChain AS (
     INNER JOIN TOPIC_PREREQUISITES tp_parent ON pc.prereq_topic_id = tp_parent.topic_id
     INNER JOIN TOPICS t_ancestor ON tp_parent.prereq_topic_id = t_ancestor.topic_id
 )
-SELECT 
+SELECT
     target_topic_id,
     prereq_topic_id,
     prereq_topic_name,
@@ -104,13 +104,13 @@ ORDER BY traversal_depth ASC, importance_weight DESC;
 ---
 
 ### 2.3 Recursive Common Table Expression 2: Descendant Walk (Unlocked Topics)
-**Endpoint**: `GET /api/curriculum/unlocked/{topic_id}`  
+**Endpoint**: `GET /api/curriculum/unlocked/{topic_id}`
 **Purpose**: Traverses forward from a mastered topic to discover all downstream concepts unlocked across successive tiers.
 
 ```sql
 WITH RECURSIVE UnlockedTopicsChain AS (
     -- Anchor Member: Topics immediately unlocked by mastering root topic
-    SELECT 
+    SELECT
         tp.topic_id AS unlocked_topic_id,
         t.topic_name AS unlocked_topic_name,
         t.difficulty_level,
@@ -123,7 +123,7 @@ WITH RECURSIVE UnlockedTopicsChain AS (
     UNION ALL
 
     -- Recursive Member: Downstream topics unlocked in higher tiers
-    SELECT 
+    SELECT
         tp_child.topic_id,
         t_child.topic_name,
         t_child.difficulty_level,
@@ -133,7 +133,7 @@ WITH RECURSIVE UnlockedTopicsChain AS (
     INNER JOIN TOPIC_PREREQUISITES tp_child ON utc.unlocked_topic_id = tp_child.prereq_topic_id
     INNER JOIN TOPICS t_child ON tp_child.topic_id = t_child.topic_id
 )
-SELECT 
+SELECT
     unlocked_topic_id,
     unlocked_topic_name,
     difficulty_level,
