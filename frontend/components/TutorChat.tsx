@@ -19,7 +19,7 @@ import { api } from "@/lib/api";
 import { CustomDropdown } from "@/components/CustomDropdown";
 import {
   Send,
-  Bot,
+  BookOpen,
   RefreshCw,
   ArrowRight,
   Check,
@@ -70,6 +70,14 @@ export function TutorChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [usePrereqFilter, setUsePrereqFilter] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    };
+  }, []);
 
   // Manual Topic Completion State
   const effectiveUserId = currentUser?.user_id ?? null;
@@ -240,10 +248,12 @@ export function TutorChat({
         include_prereqs: usePrereqFilter,
       });
 
+      const fullAnswer = res.answer || "";
+      const assistantMsgId = `ast_${Date.now()}`;
       const assistantMsg: ChatMessage = {
-        id: `ast_${Date.now()}`,
+        id: assistantMsgId,
         role: "assistant",
-        content: res.answer,
+        content: "",
         topicName: res.target_topic?.topic_name || currentTopic?.topic_name,
         prerequisites: res.prerequisites,
         retrievedChunks: res.retrieved_chunks,
@@ -256,7 +266,36 @@ export function TutorChat({
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      setStreamingMsgId(assistantMsgId);
+
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+      }
+
+      let currentLen = 0;
+      const step = Math.max(4, Math.ceil(fullAnswer.length / 50));
+      streamIntervalRef.current = setInterval(() => {
+        currentLen = Math.min(fullAnswer.length, currentLen + step);
+        const chunk = fullAnswer.slice(0, currentLen);
+
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMsgId ? { ...m, content: chunk } : m))
+        );
+
+        if (currentLen >= fullAnswer.length) {
+          if (streamIntervalRef.current) {
+            clearInterval(streamIntervalRef.current);
+            streamIntervalRef.current = null;
+          }
+          setStreamingMsgId(null);
+        }
+      }, 25);
     } catch (err: any) {
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+      }
+      setStreamingMsgId(null);
       const errorMsg: ChatMessage = {
         id: `err_${Date.now()}`,
         role: "assistant",
@@ -269,24 +308,6 @@ export function TutorChat({
     }
   };
 
-  // Helper to get natural concept label for suggestions
-  const getCleanTopicTitle = (topicName?: string) => {
-    if (!topicName) return "this concept";
-    return topicName
-      .replace(/^\d+[.\s_-]*/, "")
-      .replace(/^Part\s*\d+:\s*/i, "")
-      .replace(/[_\-]+/g, " ")
-      .trim();
-  };
-
-  const cleanTopicTitle = getCleanTopicTitle(currentTopic?.topic_name);
-
-  // Topic specific suggestions
-  const suggestions = [
-    `Explain ${cleanTopicTitle} in simple terms.`,
-    `What are the prerequisite concepts required to understand ${cleanTopicTitle}?`,
-    `Show me a worked example from ${cleanTopicTitle}.`,
-  ];
 
   return (
     <div className="tutor-panel w-full min-w-0 min-h-0 flex-1 flex flex-col rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
@@ -320,7 +341,14 @@ export function TutorChat({
 
           {messages.length > 0 && (
             <button
-              onClick={() => setMessages([])}
+              onClick={() => {
+                if (streamIntervalRef.current) {
+                  clearInterval(streamIntervalRef.current);
+                  streamIntervalRef.current = null;
+                }
+                setStreamingMsgId(null);
+                setMessages([]);
+              }}
               className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               Clear
@@ -333,32 +361,16 @@ export function TutorChat({
       <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-5">
         {messages.length === 0 ? (
           <div className="flex min-h-full flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 text-zinc-400">
-            <div className="h-10 w-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-200 border border-zinc-800">
-              <Bot className="h-5 w-5" />
+            <div className="h-10 w-10 rounded-full bg-zinc-900 flex items-center justify-center text-orange-400 border border-zinc-800 shadow-sm">
+              <BookOpen className="h-5 w-5" />
             </div>
             <div className="space-y-1">
               <h3 className="text-sm font-medium text-zinc-200">
-                Socratic AI STEM Tutor
+                Chapter1 Tutor
               </h3>
               <p className="text-xs text-zinc-500 leading-relaxed">
-                Ask questions about your course materials, explore examples, and track your understanding.
+                Ask questions about your course materials, explore concepts, and test your understanding.
               </p>
-            </div>
-
-            <div className="w-full space-y-2 pt-2">
-              <p className="text-[11px] font-mono text-zinc-500 uppercase tracking-wider text-left">
-                Suggested Inquiries
-              </p>
-              {suggestions.map((s, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSendMessage(s)}
-                  className="w-full text-left text-xs p-3 rounded-lg border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700 text-zinc-300 transition-colors flex items-center justify-between group"
-                >
-                  <span className="truncate pr-2">{s}</span>
-                  <ArrowRight className="h-3 w-3 text-zinc-500 group-hover:text-zinc-200 shrink-0" />
-                </button>
-              ))}
             </div>
           </div>
         ) : (
@@ -367,7 +379,9 @@ export function TutorChat({
             return (
               <div
                 key={msg.id}
-                className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
+                className={`flex gap-3 transition-all duration-300 ease-out animate-in fade-in-50 slide-in-from-bottom-2 ${
+                  isUser ? "justify-end" : "justify-start"
+                }`}
               >
                 <div
                   className={`max-w-[88%] sm:max-w-[80%] rounded-xl px-4 py-3 text-xs leading-relaxed space-y-2.5 ${
@@ -379,6 +393,9 @@ export function TutorChat({
                   {/* Clean Direct Educational Answer & Grounded Follow-up */}
                   <div className="space-y-2">
                     {renderFormattedContent(msg.content, isUser)}
+                    {!isUser && streamingMsgId === msg.id && (
+                      <span className="inline-block w-1.5 h-3.5 ml-1 bg-orange-400 animate-pulse rounded-sm align-middle" />
+                    )}
                   </div>
 
                   {/* Timestamp */}
@@ -458,7 +475,7 @@ export function TutorChat({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Ask a question about ${cleanTopicTitle || "the curriculum"}...`}
+            placeholder={currentTopic?.topic_name ? `Ask a question about ${currentTopic.topic_name.replace(/^\d+[.\s_-]*/, "")}...` : "Ask a question about this chapter..."}
             disabled={loading || historyLoading}
             className="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
           />
