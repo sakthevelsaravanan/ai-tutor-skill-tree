@@ -3,7 +3,8 @@ $repoPath = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $repoPath
 $logPath = Join-Path $repoPath '.runtime\logs'
 New-Item -ItemType Directory -Force -Path $logPath | Out-Null
-$pgCtl = 'C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe'
+$localPgCtl = Join-Path $repoPath '.runtime\pgsql\bin\pg_ctl.exe'
+$pgCtl = if (Test-Path $localPgCtl) { $localPgCtl } else { 'C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe' }
 $pgData = Join-Path $repoPath '.runtime\postgres'
 if (-not (Test-Path -LiteralPath (Join-Path $pgData 'PG_VERSION'))) {
     throw 'Initialize PostgreSQL first using the steps in README.md.'
@@ -28,13 +29,14 @@ foreach ($service in @('backend','frontend')) {
     $port = if ($service -eq 'backend') { 8000 } else { 3000 }
     $listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
     if ($listener) {
-        $healthUrl = if ($service -eq 'backend') { 'http://127.0.0.1:8000/health' } else { 'http://127.0.0.1:3000/api/health' }
+        $healthUrl = if ($service -eq 'backend') { 'http://127.0.0.1:8000/api/health' } else { 'http://127.0.0.1:3000' }
         try { $health = Invoke-RestMethod $healthUrl -TimeoutSec 5 } catch { throw "Port $port is already occupied by another service." }
-        if ($health.database -ne 'PostgreSQL' -or $health.database_name -ne 'ai_tutor_db') { throw "Unexpected service on port $port." }
+        if ($service -eq 'backend' -and ($health.database -ne 'PostgreSQL' -or $health.database_name -ne 'ai_tutor_db')) { throw "Unexpected service on port $port." }
         continue
     }
     if ($service -eq 'backend') {
-        $executable = (Get-Command python).Source
+        $venvPy = Join-Path $repoPath 'backend\.venv\Scripts\python.exe'
+        $executable = if (Test-Path $venvPy) { $venvPy } else { (Get-Command python).Source }
         $arguments = @('-m','uvicorn','backend.main:app','--host','127.0.0.1','--port','8000')
         $workingPath = $repoPath
     } else {
@@ -42,9 +44,11 @@ foreach ($service in @('backend','frontend')) {
         if (Test-Path .runtime/frontend-build-dir) { $buildDir = (Get-Content .runtime/frontend-build-dir -Raw).Trim() }
         if ($buildDir -notmatch '^\.next(?:-[a-z0-9-]+)?$') { throw 'Invalid frontend build directory.' }
         $env:NEXT_DIST_DIR = $buildDir
-        if (-not (Test-Path (Join-Path "frontend/$buildDir" 'BUILD_ID'))) { throw 'Run npm run build in frontend first.' }
+        $buildIdPath = Join-Path $repoPath "frontend\$buildDir\BUILD_ID"
+        if (-not (Test-Path $buildIdPath)) { throw 'Run npm run build in frontend first.' }
         $executable = (Get-Command node).Source
-        $arguments = @('node_modules/next/dist/bin/next','start','-p','3000','-H','127.0.0.1')
+        $nextCli = Join-Path $repoPath 'frontend\node_modules\next\dist\bin\next'
+        $arguments = @($nextCli, 'start', '-p', '3000', '-H', '127.0.0.1')
         $workingPath = Join-Path $repoPath 'frontend'
     }
     $process = Start-Process -FilePath $executable -ArgumentList $arguments -WorkingDirectory $workingPath -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logPath "$service.out.log") -RedirectStandardError (Join-Path $logPath "$service.err.log")

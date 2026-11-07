@@ -125,9 +125,11 @@ def delete_course_and_vectors(subject_id:int,user=Depends(require_admin)):
 @router.post('/upload')
 async def upload_and_index_document(file:UploadFile=File(...),subject_id:Optional[int]=Form(None),
     subject_name:Optional[str]=Form(None),classification:Optional[str]=Form(None),topic_id:Optional[int]=Form(None),
-    user=Depends(require_instructor)):
+    user=Depends(current_user)):
     name=file.filename or ''
-    if not name.lower().endswith(('.pdf','.txt','.md')): raise HTTPException(400,'Supported formats: PDF, TXT, MD.')
+    supported_exts = ('.pdf', '.ppt', '.pptx', '.txt', '.md')
+    if not name.lower().endswith(supported_exts):
+        raise HTTPException(400, 'Supported formats: PDF, PPT, PPTX, TXT, MD.')
     if subject_id is not None:
         subject=execute_one('SELECT * FROM subjects WHERE subject_id=%s',(subject_id,))
         if not subject: raise HTTPException(404,'Course not found.')
@@ -135,12 +137,12 @@ async def upload_and_index_document(file:UploadFile=File(...),subject_id:Optiona
     else:
         title=(subject_name or name.rsplit('.',1)[0]).strip()
         if not title or len(title)>100: raise HTTPException(422,'Course name must contain 1 to 100 characters.')
-        existing=execute_one('SELECT * FROM subjects WHERE lower(subject_name)=lower(%s)',(title,))
+        existing=execute_one('SELECT * FROM subjects WHERE lower(subject_name)=lower(%s) AND (created_by=%s OR created_by IS NULL)',(title, user['user_id']))
         if existing:
             subject_id=existing['subject_id'];key=existing['subject_key']
         else:
             slug=re.sub(r'[^a-z0-9]+','_',title.lower()).strip('_')[:32] or 'course'
-            key=slug+'_'+hashlib.sha256(title.casefold().encode()).hexdigest()[:8]
+            key=slug+'_'+hashlib.sha256((title.casefold() + str(user['user_id'])).encode()).hexdigest()[:8]
     # Extraction/embedding is blocking work; keep it off the ASGI event loop.
     from starlette.concurrency import run_in_threadpool
     result=await run_in_threadpool(pdf_indexer.process_and_index_document,file.file,name,subject_id,key,

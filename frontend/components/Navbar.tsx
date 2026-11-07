@@ -37,7 +37,7 @@ export function Navbar({
     <header className="border-b border-zinc-800 bg-zinc-950 px-4 sm:px-6 py-3">
       <div className="app-nav flex flex-wrap items-center justify-between gap-3">
         <div>
-          <span className="font-bold text-orange-400 text-lg tracking-tight">Chapter1</span>
+          <span className="font-bold text-orange-400 text-lg tracking-tight">Socratic AI Tutor</span>
         </div>
         <nav className="app-tabs flex gap-2">
           {items.map(([id, label]) => (

@@ -88,7 +88,7 @@ def test_roles_cannot_be_forged(client):
     login(client)
     assert client.post('/api/vector/clear-all',json={'role':'admin','user_id':1,'confirm':True}).status_code==403
     assert client.post('/api/vector/chunk',json={'subject_key':'x','chunk_id':'x','text':'hello'}).status_code==403
-    assert client.post('/api/vector/upload',files={'file':('notes.txt',b'Notes','text/plain')}).status_code==403
+    assert client.delete('/api/vector/course/1').status_code==403
     assert client.get('/api/auth/users').status_code==403
     client.post('/api/auth/logout')
     assert client.get('/api/auth/me').status_code==401
