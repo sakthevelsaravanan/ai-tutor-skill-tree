@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Subject, SubjectGraph, User, GraphNode } from "@/lib/types";
 import { api } from "@/lib/api";
-import { ArrowRight, Check, BookOpen } from "lucide-react";
+import { ArrowRight, Check, BookOpen, Lock } from "lucide-react";
 
 export function SkillTreeDag({
   subject,
@@ -106,20 +106,28 @@ export function SkillTreeDag({
             {graph.nodes.map((n, i) => {
               const isSelected = n.id === selected;
               const isDone = completed.includes(n.id);
+              const prereqEdges = graph.edges.filter((e) => e.target === n.id);
+              const isLocked = !isDone && prereqEdges.length > 0 && !prereqEdges.every((e) => completed.includes(e.source));
 
               let cardClass = "border-zinc-800 bg-zinc-900/40 hover:border-zinc-600";
               if (isSelected && isDone) {
                 cardClass = "border-emerald-500 bg-emerald-950/40 ring-1 ring-emerald-500/50 shadow-sm";
-              } else if (isSelected) {
+              } else if (isSelected && !isLocked) {
                 cardClass = "border-orange-500 bg-orange-950/30";
+              } else if (isSelected && isLocked) {
+                cardClass = "border-zinc-700 bg-zinc-900/60 ring-1 ring-zinc-700/50";
               } else if (isDone) {
                 cardClass = "border-emerald-800/60 bg-emerald-950/20 hover:border-emerald-600/70";
+              } else if (isLocked) {
+                cardClass = "border-zinc-800/60 bg-zinc-950/40 opacity-70 hover:opacity-90";
               }
 
               let badgeClass = "bg-zinc-800 text-zinc-300";
               if (isDone) {
                 badgeClass =
                   "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold shadow-sm";
+              } else if (isLocked) {
+                badgeClass = "bg-zinc-900 text-zinc-500 border border-zinc-800";
               } else if (isSelected) {
                 badgeClass = "bg-orange-500/20 text-orange-300 border border-orange-500/40";
               }
@@ -134,22 +142,32 @@ export function SkillTreeDag({
                     <span
                       className={`w-8 h-8 shrink-0 grid place-items-center rounded-full text-sm ${badgeClass}`}
                     >
-                      {isDone ? <Check size={16} strokeWidth={2.5} /> : i + 1}
+                      {isDone ? (
+                        <Check size={16} strokeWidth={2.5} />
+                      ) : isLocked ? (
+                        <Lock size={14} className="text-zinc-500" />
+                      ) : (
+                        i + 1
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span
                           className={`block text-sm font-medium ${
-                            isDone ? "text-emerald-100" : "text-zinc-100"
+                            isDone ? "text-emerald-100" : isLocked ? "text-zinc-400" : "text-zinc-100"
                           }`}
                         >
                           {n.label.replace(/^\d+\.\s*/, "")}
                         </span>
-                        {isDone && (
-                          <span className="shrink-0 text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-2 py-0.5 rounded-full">
-                            Done
+                        {isDone ? (
+                          <span className="shrink-0 text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Check size={11} strokeWidth={2.5} /> Done
                           </span>
-                        )}
+                        ) : isLocked ? (
+                          <span className="shrink-0 text-[11px] font-medium text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Lock size={10} /> Locked
+                          </span>
+                        ) : null}
                       </div>
                       <span className="text-xs text-zinc-500">{location(n)}</span>
                     </span>
@@ -159,60 +177,90 @@ export function SkillTreeDag({
             })}
           </ol>
 
-          {node && (
-            <article className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5 space-y-5 lg:sticky lg:top-4 min-w-0">
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <p className="text-xs text-zinc-500 flex items-center gap-2">
-                    <BookOpen size={14} />
-                    {location(node)}
-                  </p>
-                  {completed.includes(node.id) && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/40">
-                      <Check size={12} strokeWidth={2.5} /> Completed
-                    </span>
+          {node && (() => {
+            const nodeDone = completed.includes(node.id);
+            const nodePrereqs = graph.edges.filter((e) => e.target === node.id);
+            const nodeLocked = !nodeDone && nodePrereqs.length > 0 && !nodePrereqs.every((e) => completed.includes(e.source));
+            const missingPrereqNode = nodeLocked
+              ? graph.nodes.find((n) => nodePrereqs.some((e) => e.source === n.id && !completed.includes(n.id)))
+              : null;
+
+            return (
+              <article className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5 space-y-5 lg:sticky lg:top-4 min-w-0">
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-xs text-zinc-500 flex items-center gap-2">
+                      <BookOpen size={14} />
+                      {location(node)}
+                    </p>
+                    {nodeDone ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/40">
+                        <Check size={12} strokeWidth={2.5} /> Completed
+                      </span>
+                    ) : nodeLocked ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-zinc-900 text-zinc-400 border border-zinc-800">
+                        <Lock size={12} /> Locked
+                      </span>
+                    ) : null}
+                  </div>
+                  <h2 className="text-xl font-semibold text-zinc-100">{node.label}</h2>
+                  {node.source_file && (
+                    <p className="text-xs text-zinc-500 mt-2 break-words">{node.source_file}</p>
                   )}
                 </div>
-                <h2 className="text-xl font-semibold text-zinc-100">{node.label}</h2>
-                {node.source_file && (
-                  <p className="text-xs text-zinc-500 mt-2 break-words">{node.source_file}</p>
-                )}
-              </div>
 
-              <button
-                onClick={() => onSelectTopicForTutor(node.id)}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors shadow-sm ${
-                  completed.includes(node.id)
-                    ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/20"
-                    : "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-950/20"
-                }`}
-              >
-                {completed.includes(node.id) ? "Review this chapter" : "Study this chapter"}{" "}
-                <ArrowRight className="inline ml-2" size={16} />
-              </button>
-
-              <div className="border-t border-zinc-800 pt-4 space-y-2">
-                <h3 className="font-medium text-sm">Learn first</h3>
-                <p className="text-xs text-zinc-500">
-                  {before.some((e) => e.basis === "book_order")
-                    ? "Suggested prerequisite from the book’s reading order."
-                    : before.length
-                    ? "Prerequisite chapters."
-                    : "This is the starting chapter."}
-                </p>
-                {before.map((e) => link(e.source))}
-              </div>
-
-              <div className="border-t border-zinc-800 pt-4 space-y-2">
-                <h3 className="font-medium text-sm">Continue with</h3>
-                {after.length ? (
-                  after.map((e) => link(e.target))
+                {nodeLocked ? (
+                  <div className="space-y-3">
+                    <button
+                      disabled
+                      className="rounded-lg px-4 py-2 text-sm font-medium border border-zinc-800 bg-zinc-900 text-zinc-500 cursor-not-allowed flex items-center gap-2 shadow-sm"
+                      title={missingPrereqNode ? `Complete '${missingPrereqNode.label}' first` : "Complete prerequisite chapter first"}
+                    >
+                      <Lock size={15} /> Locked — Complete prerequisite first
+                    </button>
+                    {missingPrereqNode && (
+                      <p className="text-xs text-amber-500/90 bg-amber-950/20 border border-amber-900/40 rounded-lg p-2.5">
+                        Please complete <strong>{missingPrereqNode.label.replace(/^\d+\.\s*/, "")}</strong> before accessing this chapter.
+                      </p>
+                    )}
+                  </div>
                 ) : (
-                  <p className="text-sm text-zinc-400">You’ve reached the end of this reading path.</p>
+                  <button
+                    onClick={() => onSelectTopicForTutor(node.id)}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors shadow-sm ${
+                      nodeDone
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/20"
+                        : "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-950/20"
+                    }`}
+                  >
+                    {nodeDone ? "Review this chapter" : "Study this chapter"}{" "}
+                    <ArrowRight className="inline ml-2" size={16} />
+                  </button>
                 )}
-              </div>
-            </article>
-          )}
+
+                <div className="border-t border-zinc-800 pt-4 space-y-2">
+                  <h3 className="font-medium text-sm">Learn first</h3>
+                  <p className="text-xs text-zinc-500">
+                    {before.some((e) => e.basis === "book_order")
+                      ? "Suggested prerequisite from the book’s reading order."
+                      : before.length
+                      ? "Prerequisite chapters."
+                      : "This is the starting chapter."}
+                  </p>
+                  {before.map((e) => link(e.source))}
+                </div>
+
+                <div className="border-t border-zinc-800 pt-4 space-y-2">
+                  <h3 className="font-medium text-sm">Continue with</h3>
+                  {after.length ? (
+                    after.map((e) => link(e.target))
+                  ) : (
+                    <p className="text-sm text-zinc-400">You’ve reached the end of this reading path.</p>
+                  )}
+                </div>
+              </article>
+            );
+          })()}
         </div>
       )}
     </section>

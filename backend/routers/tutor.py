@@ -155,15 +155,26 @@ def _is_substantive_chunk(raw_text: str) -> bool:
 
 def _is_contextual_query(q: str) -> bool:
     q_low = q.lower().strip()
-    words = q_low.split()
-    if len(words) <= 4:
-        context_triggers = {
-            "how", "solve", "why", "what", "steps", "calculate", "example",
-            "formula", "more", "detail", "definition", "state", "states",
-            "method", "procedure", "explain", "matrix"
-        }
-        return any(w in context_triggers for w in words)
-    return False
+    # If the student explicitly names technical concepts, it's not a generic contextual follow-up
+    technical_terms = {
+        "key", "keys", "primary", "foreign", "composite", "candidate", "superkey",
+        "table", "relation", "schema", "normalization", "normal", "1nf", "2nf", "3nf", "bcnf",
+        "transaction", "acid", "isolation", "atomicity", "consistency", "durability",
+        "serializability", "concurrency", "lock", "locking", "deadlock",
+        "index", "indexes", "b-tree", "btree", "hash", "query", "planning", "scan",
+        "cipher", "matrix", "determinant", "encryption", "decryption", "hill"
+    }
+    words = set(re.findall(r'\b[a-z0-9_-]+\b', q_low))
+    if words & technical_terms:
+        return False
+
+    follow_up_phrases = [
+        "give an example", "give example", "tell me more", "more details",
+        "more detail", "how does that work", "why is that", "explain steps",
+        "how to solve", "what does that mean", "why", "how so", "elaborate",
+        "show me an example", "can you explain further"
+    ]
+    return any(p in q_low for p in follow_up_phrases) or (len(words) <= 2 and not words & technical_terms)
 
 # ==============================================================================
 # Numerical Solver for Matrix / Hill Cipher Problems (when asked explicitly)
@@ -345,24 +356,8 @@ def _synthesize_slide_rag_answer(
     clean_topic: str
 ) -> str:
     """
-    Synthesize a clean, academically grounded response from extracted slide cards.
-
-    Key Principles:
-    - Zero Hallucination: Relies strictly on retrieved slide content and exact terminology.
-    - Mathematical Precision: Formats mathematical formulas, matrices, and state transitions
-      into markdown code blocks and LaTeX KaTeX syntax.
-    - Grounding Badges: Prefixes every topic section with its exact cosine match percentage
-      and slide page number for verifiable attribution.
-    - Zero Generic Fillers: Omits conversational filler phrases to provide concise answers.
-
-    Args:
-        query: User's original prompt.
-        parsed_slides: Structured slide dictionaries extracted from top-K chunks.
-        subject_name: Name of the course subject.
-        clean_topic: Active concept topic name.
-
-    Returns:
-        Formatted markdown string ready for rendering in the Tutor chat interface.
+    Synthesize a clean, academically grounded response from retrieved slides.
+    Keeps debugging metadata hidden and directly addresses the specific question asked.
     """
     if not parsed_slides:
         return (
@@ -370,59 +365,120 @@ def _synthesize_slide_rag_answer(
             f"matching *\"{query}\"*. Please check your query or verify the slide collection in the Vectors tab."
         )
 
-    # Separate substantive slides (slides with explanation/bullets) from title divider slides
-    content_slides = [s for s in parsed_slides if len(s["body"]) > 0]
-    selected_slides = content_slides[:4] if content_slides else parsed_slides[:4]
-
-    output_blocks = []
-
     q_lower = query.lower()
-    is_solve_or_calc = any(k in q_lower for k in [
-        "how to solve", "calculate", "solve", "step", "formula", "example",
-        "procedure", "matrix", "compute"
-    ])
 
-    if is_solve_or_calc:
-        output_blocks.append(f"### **Problem Solving & Methods from Course Slides**\n")
+    # Collect all substantive lines and sentences from slides
+    all_lines = []
+    for s in parsed_slides:
+        for line in s.get("body", []):
+            if line and len(line.strip()) > 3:
+                all_lines.append(line.strip())
+        if not s.get("body") and s.get("chunk"):
+            doc = s["chunk"].get("document", "")
+            for p in doc.splitlines():
+                if p.strip() and len(p.strip()) > 10:
+                    all_lines.append(p.strip())
+
+    if not all_lines:
+        return (
+            f"Sufficient supporting information was not found in the selected course material for "
+            f"**{subject_name}** matching *\"{query}\"*. Please check your query or verify the course material."
+        )
+
+    # Break lines into individual sentences for fine-grained semantic targeting
+    sentences = []
+    for l in all_lines:
+        raw_sents = re.split(r'(?<=[.!?])\s+', l)
+        for s in raw_sents:
+            s_clean = s.strip()
+            if len(s_clean) >= 15:
+                sentences.append(s_clean)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_sentences = []
+    for s in sentences:
+        norm = s.lower()
+        if norm not in seen:
+            seen.add(norm)
+            unique_sentences.append(s)
+
+    # Query keyword scoring
+    stop_words = {
+        "what", "is", "a", "an", "the", "are", "explain", "tell", "me", "about",
+        "how", "why", "in", "to", "for", "of", "and", "or", "does", "do", "can"
+    }
+    query_words = [w for w in re.findall(r'\b[a-z0-9_-]+\b', q_lower) if w not in stop_words and len(w) > 1]
+
+    # Check for specific concepts in query
+    is_foreign_key = "foreign" in q_lower
+    is_primary_key = "primary" in q_lower and "foreign" not in q_lower
+    is_diff = any(d in q_lower for d in ["difference", "different", "versus", "vs", "compare"])
+    is_example = any(e in q_lower for e in ["example", "instance", "sample"])
+
+    selected_sentences = []
+    if is_diff:
+        for s in unique_sentences:
+            s_low = s.lower()
+            if "primary key" in s_low or "foreign key" in s_low or "reference" in s_low:
+                selected_sentences.append(s)
+    elif is_foreign_key:
+        for s in unique_sentences:
+            s_low = s.lower()
+            if any(term in s_low for term in ["foreign key", "reference", "referential", "cascade", "parent"]):
+                selected_sentences.append(s)
+    elif is_primary_key:
+        for s in unique_sentences:
+            s_low = s.lower()
+            if any(term in s_low for term in ["primary key", "unique", "null", "composite"]):
+                selected_sentences.append(s)
+    elif is_example:
+        for s in unique_sentences:
+            s_low = s.lower()
+            if any(term in s_low for term in ["for example", "example", "quiz attempt", "record"]):
+                selected_sentences.append(s)
     else:
-        output_blocks.append(f"### **Topics & Definitions from Course Slides**\n")
+        scored = []
+        for s in unique_sentences:
+            s_low = s.lower()
+            score = sum(1 for w in query_words if w in s_low)
+            scored.append((score, s))
+        selected_sentences = [s for sc, s in scored if sc > 0]
+        if not selected_sentences:
+            selected_sentences = unique_sentences[:4]
 
-    for item in selected_slides:
-        sim_pct = f"{round(item['similarity'] * 100, 1)}%"
-        page_ref = f"Slide Page {item['page']}" if item['page'] != "N/A" else item['file']
+    if not selected_sentences:
+        selected_sentences = unique_sentences[:4]
 
-        block_lines = []
-        block_lines.append(f"#### **{item['title']}** `(Match: {sim_pct} · {page_ref})`")
+    # Clean prose paragraphs
+    paragraphs = []
+    main_text = " ".join(selected_sentences[:3])
+    paragraphs.append(main_text)
 
-        body_lines = item["body"]
-        if not body_lines:
-            block_lines.append(f"*(Title section in slide deck — refer to {page_ref} for visual diagrams)*\n")
-        else:
-            bullets = []
-            narrative = []
-            for line in body_lines:
-                # Highlight mathematical formulas, transitions, or matrix equations
-                if any(sym in line for sym in [
-                    "PI =", "Pij", "P =", "Xn", "S = {", "lambda", "sum", "alpha",
-                    "beta", "->", "x Pn", "det", "gcd", "bmod"
-                ]):
-                    narrative.append(f"> `{line}`")
-                elif line.startswith("-") or line.startswith("•") or line.startswith("*") or (len(line) > 1 and line[0].isdigit() and line[1] in ".)"):
-                    bullets.append(line)
-                elif ":" in line and len(line.split(":")[0].split()) <= 4:
-                    k, v = line.split(":", 1)
-                    bullets.append(f"- **{k.strip()}:** {v.strip()}")
-                else:
-                    narrative.append(line)
+    if len(selected_sentences) > 3:
+        extra_points = []
+        for extra in selected_sentences[3:6]:
+            extra_points.append(f"- {extra}")
+        if extra_points:
+            paragraphs.append("\n".join(extra_points))
 
-            if narrative:
-                block_lines.append("\n".join(narrative))
-            if bullets:
-                block_lines.append("\n".join(bullets))
+    # Relevant Socratic follow-up question
+    if is_foreign_key or ("foreign" in " ".join(selected_sentences).lower()):
+        socratic_q = "*Reflective Question: What happens if an application tries to delete a parent row that still has corresponding child foreign key records, assuming ON DELETE CASCADE is NOT enabled?*"
+    elif is_primary_key or ("primary key" in " ".join(selected_sentences).lower()):
+        socratic_q = "*Reflective Question: Why is a primary key prohibited from containing NULL values in a relational database?*"
+    elif "transaction" in q_lower or "acid" in q_lower:
+        socratic_q = "*Reflective Question: Which ACID property ensures that partial transaction updates are rolled back upon system failure?*"
+    elif "normalization" in q_lower:
+        socratic_q = "*Reflective Question: What kind of functional dependency does Boyce-Codd Normal Form (BCNF) eliminate that 3NF might tolerate?*"
+    elif "index" in q_lower or "b-tree" in q_lower:
+        socratic_q = "*Reflective Question: How does creating a secondary index affect the speed of INSERT and UPDATE queries on that table?*"
+    else:
+        socratic_q = f"*Reflective Question: How does this concept connect to the core relational principles in {clean_topic or subject_name}?*"
 
-        output_blocks.append("\n".join(block_lines))
+    paragraphs.append(socratic_q)
 
-    return "\n\n".join(output_blocks)
+    return "\n\n".join(paragraphs)
 
 # ==============================================================================
 # Main Tutor API Endpoint
@@ -648,6 +704,11 @@ def socratic_tutor_query(req:TutorQueryRequest,user=Depends(current_user)):
     if not req.query.strip(): raise HTTPException(422,'Enter a question.')
     if req.user_id is not None and req.user_id != user['user_id']:
         raise HTTPException(403,'User identity must match the signed-in account.')
+    if req.topic_id and user.get('role') == 'student':
+        from backend.routers.curriculum import check_topic_unlocked
+        is_unlocked, missing_name = check_topic_unlocked(req.topic_id, user['user_id'])
+        if not is_unlocked:
+            raise HTTPException(403, f"Topic is locked. You must complete prerequisite '{missing_name}' first.")
     if req.session_id:
         session=owned_session(req.session_id,user)
         if session['subject_id'] != req.subject_id:

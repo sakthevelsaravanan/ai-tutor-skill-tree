@@ -26,7 +26,7 @@ export function Login({ onLogin }: { onLogin: (user: User) => void }) {
           }
         }}
       >
-        <p className="text-sm text-orange-400 font-semibold tracking-tight">Chapter1</p>
+        <p className="text-sm text-orange-400 font-semibold tracking-tight">Socratic AI Tutor</p>
         <h1 className="text-3xl font-semibold">Welcome back</h1>
         <p className="text-sm text-zinc-400">
           Sign in to explore your courses and continue learning.
