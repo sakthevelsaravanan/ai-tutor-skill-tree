@@ -20,12 +20,40 @@ class DocumentIndexer:
         # UploadFile spools large uploads to disk; avoid copying the whole PDF into RAM.
         stream = io.BytesIO(file_bytes) if isinstance(file_bytes, bytes) else file_bytes
         stream.seek(0)
-        if file_name.lower().endswith('.pdf'):
+        fname_lower = file_name.lower()
+        if fname_lower.endswith('.pdf'):
             try:
                 reader=PdfReader(stream)
                 pages=[(i+1,page.extract_text() or '') for i,page in enumerate(reader.pages)]
             except Exception:
                 raise HTTPException(400,'The PDF could not be read. Upload an unencrypted, text-based PDF.')
+        elif fname_lower.endswith(('.pptx', '.ppt')):
+            pages = []
+            try:
+                from pptx import Presentation
+                prs = Presentation(stream)
+                for i, slide in enumerate(prs.slides):
+                    texts = []
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text:
+                            texts.append(shape.text.strip())
+                    pages.append((i + 1, "\n".join(texts)))
+            except Exception:
+                # Fallback to direct XML parsing if needed
+                try:
+                    import zipfile
+                    import xml.etree.ElementTree as ET
+                    stream.seek(0)
+                    pages = []
+                    with zipfile.ZipFile(stream) as z:
+                        slide_files = sorted([f for f in z.namelist() if f.startswith('ppt/slides/slide') and f.endswith('.xml')],
+                                             key=lambda x: int(''.join(filter(str.isdigit, x)) or '0'))
+                        for i, sf in enumerate(slide_files):
+                            root = ET.fromstring(z.read(sf))
+                            text_bits = [elem.text for elem in root.iter() if elem.text and elem.text.strip()]
+                            pages.append((i + 1, " ".join(text_bits)))
+                except Exception:
+                    raise HTTPException(400, 'The presentation could not be read. Upload a valid, uncorrupted PPT or PPTX file.')
         else:
             try:
                 pages=[(1,stream.read().decode('utf-8-sig'))]
