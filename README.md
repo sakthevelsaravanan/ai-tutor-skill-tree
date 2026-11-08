@@ -1,12 +1,5 @@
 # Chapter1: Relational STEM Skill Tree & Vector Knowledge Base
 
-> **Adaptive Socratic Tutoring System Powered by Polyglot Relational DAGs and Dense Vector Retrieval**  
-> **Course**: Database Management Systems (`UE23CS251AK`) — Level 3 Mini Project (50 Marks)  
-> **Institution**: PES University — Department of Computer Science and Engineering  
-> **Academic Year**: 2026–2027  
-> **Repository**: [https://github.com/sakthevelsaravanan/ai-tutor-skill-tree](https://github.com/sakthevelsaravanan/ai-tutor-skill-tree)  
-> **Tech Stack**: PostgreSQL 18 / MySQL 8.0 (InnoDB) + ChromaDB (HNSW) + FastAPI (Python 3.11) + Next.js 14 (TypeScript)
-
 ---
 
 ## 1. System Overview & Problem Statement
@@ -377,9 +370,3 @@ ai-tutor-skill-tree/
 ```
 
 ---
-
-## 12. Authors & Academic Credits
-
-- **Sakthevel Saravanan** (`PES1UG23CS500`) — PES University, Department of CSE
-- **Roshan Kumar** (`PES1UG23CS474`) — PES University, Department of CSE
-- **Course Faculty**: Department of Computer Science and Engineering, PES University
