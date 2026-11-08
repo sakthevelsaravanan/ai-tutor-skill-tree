@@ -480,27 +480,23 @@ export function TutorChat({
             className="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-orange-500 disabled:opacity-50"
           />
 
-          {/* Clearly Visible Done Button Beside Composer */}
-          <button
-            type="button"
-            onClick={handleMarkDone}
-            disabled={completing || !selectedTopicId || !effectiveUserId || isCompleted}
-            className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium border transition-all shrink-0 active:scale-95 ${
-              isCompleted
-                ? "bg-emerald-950/50 text-emerald-400 border-emerald-500/50 cursor-default shadow-sm"
-                : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-emerald-300 border-zinc-700 hover:border-emerald-500/50 shadow-sm"
-            }`}
-            title={isCompleted ? "Topic completed by you" : "Click once finished studying this concept"}
-          >
-            {completing ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin text-zinc-400" />
-            ) : isCompleted ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-            ) : (
-              <Check className="h-3.5 w-3.5 text-zinc-400" />
-            )}
-            <span>{isCompleted ? "Completed" : "Mark as Done"}</span>
-          </button>
+          {/* Done Button Beside Composer — completely disappears once completed */}
+          {!isCompleted && selectedTopicId && (
+            <button
+              type="button"
+              onClick={handleMarkDone}
+              disabled={completing || !selectedTopicId || !effectiveUserId}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all shrink-0 active:scale-95 bg-emerald-950/50 hover:bg-emerald-900/70 text-emerald-300 border-emerald-600/60 hover:border-emerald-500 shadow-sm"
+              title="Click once finished studying this concept"
+            >
+              {completing ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+              ) : (
+                <Check className="h-3.5 w-3.5 text-emerald-400" strokeWidth={2.5} />
+              )}
+              <span>✓ Mark as Done</span>
+            </button>
+          )}
 
           <button
             type="submit"

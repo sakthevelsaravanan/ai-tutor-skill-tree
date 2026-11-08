@@ -26,27 +26,73 @@ from backend.security import current_user, require_owner
 
 router = APIRouter(prefix="/api/curriculum", tags=["Curriculum & Skill Tree"], dependencies=[Depends(current_user)])
 
+def check_topic_unlocked(topic_id: int, user_id: int):
+    """
+    Checks if all direct prerequisites for topic_id have been completed by user_id in PostgreSQL.
+    Returns (is_unlocked, missing_prereq_name).
+    """
+    missing = execute_query("""
+        SELECT p.prereq_topic_id, t.topic_name
+        FROM topic_prerequisites p
+        JOIN topics t ON p.prereq_topic_id = t.topic_id
+        WHERE p.topic_id = %s
+          AND p.prereq_topic_id NOT IN (
+              SELECT topic_id FROM student_topic_completions WHERE user_id = %s
+          )
+        ORDER BY t.sort_order ASC, p.prereq_topic_id ASC
+    """, (topic_id, user_id))
+    if missing:
+        return False, missing[0]["topic_name"]
+    return True, None
+
+@router.get("/topics/{topic_id}/access/{user_id}")
+def get_topic_access(topic_id: int, user_id: int, actor=Depends(current_user)):
+    require_owner(actor, user_id)
+    is_unlocked, missing_name = check_topic_unlocked(topic_id, user_id)
+    return {
+        "topic_id": topic_id,
+        "user_id": user_id,
+        "is_unlocked": is_unlocked,
+        "missing_prerequisite": missing_name,
+        "message": f"Complete '{missing_name}' to unlock this topic." if missing_name else "Topic is unlocked."
+    }
+
 @router.get("/subjects")
-def get_subjects():
+def get_subjects(actor=Depends(current_user)):
     """
     Retrieve all course subjects with aggregated counts of associated topics and indexed textbooks.
-    Performs SQL GROUP BY with LEFT JOIN across SUBJECTS, TOPICS, and TEXTBOOKS tables.
+    Enforces student course isolation: students see demo/instructor courses + their own uploaded courses.
     """
-    return execute_query("""
+    role = actor.get("role", "student")
+    user_id = actor["user_id"]
+    if role in ("admin", "instructor"):
+        where_clause = ""
+        params = ()
+    else:
+        where_clause = """
+            WHERE s.created_by IS NULL
+               OR s.created_by = %s
+               OR s.created_by IN (SELECT user_id FROM users WHERE role IN ('instructor', 'admin'))
+        """
+        params = (user_id,)
+
+    return execute_query(f"""
         SELECT 
             s.subject_id,
             s.subject_key,
             s.subject_name,
             s.description,
             s.is_indexed,
+            s.created_by,
             COUNT(DISTINCT t.topic_id) AS total_topics,
             COUNT(DISTINCT tb.textbook_id) AS total_textbooks
         FROM SUBJECTS s
         LEFT JOIN TOPICS t ON s.subject_id = t.subject_id
         LEFT JOIN TEXTBOOKS tb ON s.subject_id = tb.subject_id
-        GROUP BY s.subject_id, s.subject_key, s.subject_name, s.description, s.is_indexed
+        {where_clause}
+        GROUP BY s.subject_id, s.subject_key, s.subject_name, s.description, s.is_indexed, s.created_by
         ORDER BY s.subject_id
-    """)
+    """, params)
 
 @router.get("/topics/{subject_id}")
 def get_topics_by_subject(subject_id: int):

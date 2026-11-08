@@ -75,6 +75,16 @@ export function DocumentUpload({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const selected = e.target.files[0];
+      const validExts = [".pdf", ".ppt", ".pptx", ".txt", ".md"];
+      const lower = selected.name.toLowerCase();
+      if (!validExts.some((ext) => lower.endsWith(ext))) {
+        setError("Invalid file type. Supported formats: PDF, PPT, PPTX, TXT, MD.");
+        return;
+      }
+      if (selected.size > 50 * 1024 * 1024) {
+        setError("File size exceeds 50MB limit. Please upload a smaller document.");
+        return;
+      }
       setFile(selected);
       setError(null);
       // Auto-populate course name from filename if empty
@@ -90,7 +100,7 @@ export function DocumentUpload({
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) {
-      setError("Please select a course document (PDF, TXT, or MD) to ingest.");
+      setError("Please select a course document (PDF, PPT, PPTX, TXT, or MD) to ingest.");
       return;
     }
     if (!courseName.trim()) {
@@ -305,13 +315,13 @@ export function DocumentUpload({
           {/* 1. Drag and Drop File Zone */}
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-              Document (PDF, TXT, MD)
+              Document (PDF, PPT, PPTX, TXT, MD)
             </label>
             <div className="border-2 border-dashed border-zinc-800 hover:border-orange-500/60 rounded-xl p-5 text-center transition bg-zinc-900/40 group">
               <input
                 id="doc-file-input"
                 type="file"
-                accept=".pdf,.txt,.md"
+                accept=".pdf,.ppt,.pptx,.txt,.md"
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -326,7 +336,7 @@ export function DocumentUpload({
                   <span className="text-xs text-zinc-500"></span>
                 </div>
                 <p className="text-[11px] font-mono text-zinc-500">
-                  Accepts textbook PDFs, syllabus files, and markdown lecture notes
+                  Accepts textbook PDFs, PowerPoint slides (.ppt, .pptx), and lecture notes
                 </p>
               </label>
 
