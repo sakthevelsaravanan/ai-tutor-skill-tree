@@ -26,23 +26,23 @@ export const RoleSwitcherModal: React.FC<RoleSwitcherModalProps> = ({
   const roles = [
     {
       role: "student" as const,
-      name: "Roshan Kumar",
-      email: "roshan@chapter1.edu",
+      name: "Student",
+      email: "student@chapter1.edu",
       badgeColor: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
       icon: GraduationCap,
       description: "Prerequisite DAG exploration & interactive tutoring",
     },
     {
       role: "instructor" as const,
-      name: "Dr. Alan Turing",
-      email: "turing@chapter1.edu",
+      name: "Instructor",
+      email: "instructor@chapter1.edu",
       badgeColor: "bg-amber-500/20 text-amber-300 border-amber-500/30",
       icon: BookOpen,
       description: "Course document ingestion & curriculum design",
     },
     {
       role: "admin" as const,
-      name: "Ada Lovelace",
+      name: "Admin",
       email: "admin@chapter1.edu",
       badgeColor: "bg-orange-500/20 text-orange-400 border-orange-500/40",
       icon: ShieldCheck,
