@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
-import { Subject, User } from "@/lib/types";
+import React, { useState, useEffect } from "react";
+import { Subject, User, Topic } from "@/lib/types";
 import { api } from "@/lib/api";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import {
@@ -15,6 +15,7 @@ import {
   Sparkles,
   GitFork,
   MessageSquare,
+  BookOpen,
   Tag,
   Trash2,
 } from "lucide-react";
@@ -59,6 +60,16 @@ export function DocumentUpload({
     subjectName: "",
   });
   const [deleting, setDeleting] = useState<boolean>(false);
+  const [courseTopics, setCourseTopics] = useState<Topic[]>([]);
+  const activeSubject = subjects.find((s) => s.subject_id === activeSubjectId) || subjects[0] || null;
+
+  useEffect(() => {
+    if (activeSubject?.subject_id) {
+      api.getTopics(activeSubject.subject_id)
+        .then(setCourseTopics)
+        .catch(() => setCourseTopics([]));
+    }
+  }, [activeSubject?.subject_id]);
   const [courseName, setCourseName] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -167,7 +178,7 @@ export function DocumentUpload({
   };
 
   return (
-    <div className="w-full min-w-0 space-y-4">
+    <div className="w-full max-w-6xl mx-auto space-y-6">
       {/* Pristine Clean Header */}
       <div className="space-y-2">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-950/40 border border-orange-800/60 text-xs font-mono text-orange-400">
@@ -390,6 +401,105 @@ export function DocumentUpload({
             )}
           </button>
         </form>
+        </div>
+      )}
+
+      {/* Active Course Overview & Roadmap to Eliminate Empty Space */}
+      {activeSubject && activeSubject.is_indexed && (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 sm:p-6 space-y-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="text-xs font-mono font-medium text-orange-400 uppercase tracking-wider">
+                  Active Course Inspection
+                </span>
+              </div>
+              <h2 className="text-lg font-bold text-zinc-100 mt-1">{activeSubject.subject_name}</h2>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Hierarchical book structure indexed in PostgreSQL & dense vectors stored in ChromaDB.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  onSubjectChange(activeSubject.subject_id);
+                  setHasDocument(true);
+                  onProceedToSkillTree();
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold transition shadow-sm shadow-orange-600/20 active:scale-95"
+              >
+                <GitFork className="h-3.5 w-3.5" />
+                <span>Open Skill Tree</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  onSubjectChange(activeSubject.subject_id);
+                  setHasDocument(true);
+                  onProceedToTutor();
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold transition active:scale-95"
+              >
+                <MessageSquare className="h-3.5 w-3.5 text-orange-400" />
+                <span>Open Tutor</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Metrics Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1">
+              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Curriculum Scope</span>
+              <p className="text-lg font-bold text-zinc-100">{courseTopics.length || activeSubject.total_topics} Chapters</p>
+              <p className="text-xs text-zinc-400">Sequential prerequisite reading order</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1">
+              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Vector Knowledge Base</span>
+              <p className="text-lg font-bold text-orange-400">ChromaDB Indexed</p>
+              <p className="text-xs text-zinc-400">Dense embeddings for semantic search</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1">
+              <span className="text-[10px] uppercase font-mono text-zinc-500 block">DBMS Integrity</span>
+              <p className="text-lg font-bold text-emerald-400">PostgreSQL Verified</p>
+              <p className="text-xs text-zinc-400">ACID multi-table transactions & CTE graph</p>
+            </div>
+          </div>
+
+          {/* Chapter Roadmap Grid */}
+          {courseTopics.length > 0 && (
+            <div className="space-y-2.5 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                  Chapter Reading Order ({courseTopics.length})
+                </span>
+                <span className="text-[11px] text-zinc-500 font-mono">
+                  Prerequisite sequence preserved
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {courseTopics.map((t, idx) => (
+                  <div
+                    key={t.topic_id}
+                    className="flex items-center gap-2.5 p-3 rounded-xl bg-zinc-950/70 border border-zinc-800/90 text-xs hover:border-zinc-700 transition"
+                  >
+                    <span className="h-6 w-6 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center font-mono text-xs font-bold text-orange-400 shrink-0">
+                      {idx + 1}
+                    </span>
+                    <span className="truncate text-zinc-200 flex-1 font-medium">
+                      {t.topic_name.replace(/^\d+\.\s*/, "")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

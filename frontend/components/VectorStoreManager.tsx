@@ -143,7 +143,7 @@ export function VectorStoreManager({ subject }: { subject?: Subject }) {
   const totalPages = Math.max(1, Math.ceil(total / size));
 
   return (
-    <section className="space-y-4 min-w-0 max-w-5xl">
+    <section className="w-full max-w-6xl mx-auto space-y-4">
       {/* Header Info */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
         <div>
@@ -284,38 +284,40 @@ export function VectorStoreManager({ subject }: { subject?: Subject }) {
                 onClick={() => toggleExpand(item.id)}
                 className="w-full flex items-center justify-between gap-3 p-3 text-left transition"
               >
-                <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <span className="shrink-0 text-[11px] font-mono font-medium text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
-                    #{idx + 1 + (results === null ? page * size : 0)}
-                  </span>
-
-                  <span className="shrink-0 text-[11px] font-semibold text-orange-400/90 bg-orange-950/40 px-2 py-0.5 rounded border border-orange-900/40">
-                    Page {pageNum}
-                  </span>
-
-                  {simPct && (
-                    <span className="shrink-0 text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50">
-                      Match: {simPct}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[11px] font-mono font-medium text-zinc-400 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 shrink-0">
+                      #{idx + 1 + (results === null ? page * size : 0)}
                     </span>
-                  )}
 
-                  <span className="text-xs font-medium text-zinc-300 truncate max-w-[200px] sm:max-w-[260px]">
+                    <span className="text-[11px] font-semibold text-orange-400 bg-orange-950/40 px-2 py-0.5 rounded border border-orange-900/40 shrink-0">
+                      Page {pageNum}
+                    </span>
+
+                    {simPct && (
+                      <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50 shrink-0">
+                        Match: {simPct}
+                      </span>
+                    )}
+                  </div>
+
+                  <span className="text-xs font-semibold text-zinc-200 shrink-0 w-44 lg:w-56 truncate">
                     {chapterName.replace(/^\d+\.\s*/, "")}
                   </span>
 
-                  <span className="hidden md:inline-block text-xs text-zinc-500 truncate flex-1">
-                    {item.document.replace(/\s+/g, " ").slice(0, 75)}...
+                  <span className="hidden md:block min-w-0 flex-1 text-xs text-zinc-400 font-mono truncate">
+                    {item.document.replace(/\s+/g, " ")}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[11px] text-zinc-500">
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  <span className="text-[11px] text-zinc-400 font-medium">
                     {isExpanded ? "Collapse" : "Read"}
                   </span>
                   {isExpanded ? (
-                    <ChevronUp className="h-4 w-4 text-zinc-400" />
+                    <ChevronUp className="h-4 w-4 text-orange-400" />
                   ) : (
-                    <ChevronDown className="h-4 w-4 text-zinc-500" />
+                    <ChevronDown className="h-4 w-4 text-zinc-400" />
                   )}
                 </div>
               </button>

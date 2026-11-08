@@ -13,7 +13,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Subject, Topic, PrerequisiteItem, VectorSearchResult, User } from "@/lib/types";
 import { api } from "@/lib/api";
 import { CustomDropdown } from "@/components/CustomDropdown";
@@ -23,6 +23,7 @@ import {
   RefreshCw,
   ArrowRight,
   Check,
+  Lock,
   CheckCircle2,
   AlertCircle,
   X,
@@ -65,6 +66,9 @@ export function TutorChat({
 }: TutorChatProps) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(initialTopicId || null);
+  const [completedTopicIdsList, setCompletedTopicIdsList] = useState<number[]>([]);
+  const [graphEdges, setGraphEdges] = useState<Array<{ source: number; target: number }>>([]);
+  const [lockBanner, setLockBanner] = useState<string | null>(null);
   const [query, setQuery] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -108,30 +112,63 @@ export function TutorChat({
     return sessionRef.current;
   };
 
-  // Sync topics when activeSubjectId changes
+  // Synchronize topics, prerequisite edges, and completed topics for sequential locking
   useEffect(() => {
-    async function loadTopics() {
+    let alive = true;
+    async function loadData() {
       try {
-        const topicList = await api.getTopics(activeSubjectId);
+        const isStudentRole = currentUser?.role === "student";
+        const [topicList, graphData, doneData] = await Promise.all([
+          api.getTopics(activeSubjectId),
+          api.getSubjectGraph(activeSubjectId).catch(() => ({ nodes: [], edges: [] })),
+          isStudentRole && currentUser?.user_id
+            ? api.getCompletedTopics(currentUser.user_id, activeSubjectId).catch(() => ({ completed_topic_ids: [] }))
+            : Promise.resolve({ completed_topic_ids: [] }),
+        ]);
+
+        if (!alive) return;
+
+        const edges = (graphData as any)?.edges || [];
+        const doneList: number[] = (doneData as any)?.completed_topic_ids || [];
+
         setTopics(topicList);
-        if (topicList.length > 0) {
-          const match = topicList.find((t) => t.topic_id === selectedTopicId);
-          if (!match) {
-            setSelectedTopicId(topicList[0].topic_id);
+        setGraphEdges(edges);
+        setCompletedTopicIdsList(doneList);
+
+        // Compute locked IDs
+        const locked = new Set<number>();
+        if (isStudentRole && edges.length > 0) {
+          for (const t of topicList) {
+            const prereqs = edges.filter((e: any) => e.target === t.topic_id);
+            const isDone = doneList.includes(t.topic_id);
+            if (!isDone && prereqs.length > 0 && !prereqs.every((e: any) => doneList.includes(e.source))) {
+              locked.add(t.topic_id);
+            }
           }
+        }
+
+        // Determine target topic
+        let targetId = initialTopicId || selectedTopicId;
+        if (targetId && locked.has(targetId) && isStudentRole) {
+          const firstUnlocked = topicList.find((t) => !locked.has(t.topic_id));
+          targetId = firstUnlocked ? firstUnlocked.topic_id : topicList[0]?.topic_id || null;
+        } else if (!targetId && topicList.length > 0) {
+          const firstUnlocked = topicList.find((t) => !locked.has(t.topic_id));
+          targetId = firstUnlocked ? firstUnlocked.topic_id : topicList[0]?.topic_id || null;
+        }
+
+        if (targetId !== null) {
+          setSelectedTopicId(targetId);
         }
       } catch (err) {
         console.error("Failed to load topics for tutor:", err);
       }
     }
-    loadTopics();
-  }, [activeSubjectId]);
-
-  useEffect(() => {
-    if (initialTopicId) {
-      setSelectedTopicId(initialTopicId);
-    }
-  }, [initialTopicId]);
+    loadData();
+    return () => {
+      alive = false;
+    };
+  }, [activeSubjectId, currentUser?.user_id, currentUser?.role, initialTopicId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -178,6 +215,21 @@ export function TutorChat({
     };
   }, [selectedTopicId, effectiveUserId, completedTopicIds]);
 
+  const isStudent = currentUser?.role === "student";
+
+  const lockedTopicIds = useMemo(() => {
+    const set = new Set<number>();
+    if (!isStudent || !graphEdges.length) return set;
+    for (const t of topics) {
+      const prereqs = graphEdges.filter((e) => e.target === t.topic_id);
+      const isDone = completedTopicIdsList.includes(t.topic_id);
+      if (!isDone && prereqs.length > 0 && !prereqs.every((e) => completedTopicIdsList.includes(e.source))) {
+        set.add(t.topic_id);
+      }
+    }
+    return set;
+  }, [isStudent, graphEdges, topics, completedTopicIdsList]);
+
   const currentTopic = topics.find((t) => t.topic_id === selectedTopicId) || topics[0] || null;
 
   const handleDomainChange = async (newSubjectId: number) => {
@@ -206,6 +258,7 @@ export function TutorChat({
       const res = await api.markTopicComplete(targetTopicId, effectiveUserId);
       if (res.is_completed) {
         setIsCompleted(true);
+        setCompletedTopicIdsList((prev) => [...prev, targetTopicId]);
         setCompletionToast("Topic marked as completed!");
         if (onTopicCompleted) {
           onTopicCompleted(targetTopicId);
@@ -321,8 +374,31 @@ export function TutorChat({
             <div className="w-44 sm:w-72">
               <CustomDropdown
                 value={String(selectedTopicId || (currentTopic ? currentTopic.topic_id : ""))}
-                onChange={(val) => setSelectedTopicId(Number(val))}
-                options={topics.map((t) => ({ value: String(t.topic_id), label: t.topic_name }))}
+                onChange={(val) => {
+                  const tid = Number(val);
+                  if (lockedTopicIds.has(tid) && isStudent) {
+                    const opt = topics.find((t) => t.topic_id === tid);
+                    setLockBanner(
+                      `Chapter '${(opt?.topic_name || "").replace(/^\d+\.\s*/, "")}' is locked. Please complete prerequisite chapters first.`
+                    );
+                    setTimeout(() => setLockBanner(null), 4000);
+                    return;
+                  }
+                  setSelectedTopicId(tid);
+                }}
+                onBlockedSelect={(opt) => {
+                  setLockBanner(
+                    `Chapter '${opt.label.replace(/^\d+\.\s*/, "")}' is locked. Please complete prerequisite chapters first.`
+                  );
+                  setTimeout(() => setLockBanner(null), 4000);
+                }}
+                options={topics.map((t) => ({
+                  value: String(t.topic_id),
+                  label: t.topic_name,
+                  locked: lockedTopicIds.has(t.topic_id),
+                  isDone: completedTopicIdsList.includes(t.topic_id),
+                  lockReason: lockedTopicIds.has(t.topic_id) ? "Prerequisites not completed" : undefined,
+                }))}
                 placeholder="Select topic..."
               />
             </div>
@@ -358,6 +434,22 @@ export function TutorChat({
           )}
         </div>
       </div>
+
+      {/* Locked Warning Banner */}
+      {lockBanner && (
+        <div className="bg-amber-950/70 border-b border-amber-800/80 px-4 py-2.5 text-xs text-amber-200 flex items-center justify-between animate-in fade-in">
+          <span className="flex items-center gap-2 font-medium">
+            <Lock className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            <span>{lockBanner}</span>
+          </span>
+          <button
+            onClick={() => setLockBanner(null)}
+            className="text-amber-400/80 hover:text-amber-200 text-xs px-1.5 py-0.5 rounded hover:bg-amber-900/50 transition"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Messages Stream */}
       <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-5">

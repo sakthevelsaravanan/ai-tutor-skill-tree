@@ -394,10 +394,11 @@ def _synthesize_slide_rag_answer(
         page_ref = f"Page {page_val}" if page_val != "N/A" else p.get('file', 'Notes')
         raw_title = p.get('title', clean_topic or 'Course Material').strip()
 
-        # Clean title: strip trailing numbers or "Section X.X"
-        clean_title = re.sub(r'^(Section|Chapter)\s+\d+(?:\.\d+)?\s*', '', raw_title, flags=re.I).strip()
+        # Clean title: strip leading page numbers, chapter/section prefixes, and trailing digits
+        clean_title = re.sub(r'^\d+\s+(Chapter|Section)\s+\d+(?:\.\d+)?\s*', '', raw_title, flags=re.I).strip()
+        clean_title = re.sub(r'^(Section|Chapter)\s+\d+(?:\.\d+)?\s*', '', clean_title, flags=re.I).strip()
+        clean_title = re.sub(r'^\d+[\.\s_-]+', '', clean_title).strip()
         clean_title = re.sub(r'\s+\d+$', '', clean_title).strip()
-        clean_title = re.sub(r'^\d+\.\s*', '', clean_title).strip()
         if not clean_title or len(clean_title) < 3:
             clean_title = clean_topic or 'Course Material'
 
@@ -407,6 +408,8 @@ def _synthesize_slide_rag_answer(
 
         # 1. De-hyphenate words broken across newlines (e.g. representa-\ntion -> representation)
         doc = re.sub(r'(\b[a-zA-Z]+)[-\u2010\u2013\u2014]\s*\n?\s*([a-zA-Z]+\b)', r'\1\2', doc)
+        # Strip running book chapter headers (e.g. "34 Chapter 1 Digital Systems and Binary Numbers")
+        doc = re.sub(r'(?i)\b\d+\s+Chapter\s+\d+\s+[A-Za-z\s]+(?=\d+\.\d+|\n|$)', '', doc)
 
         # 2. Split lines and unwrap continuous sentences
         raw_lines = [l.strip() for l in doc.splitlines() if l.strip()]
@@ -455,13 +458,18 @@ def _synthesize_slide_rag_answer(
                     continue
                 if not re.search(r'[\.\?\!]$', s_clean) and not s_clean.startswith('`'):
                     continue
-                if re.search(r'[-–—:,]$', s_clean):
+                # Filter out exercises, homework problems, and questions e.g. "1.7 * Convert..."
+                if re.match(r'^\d+\.\d+\s*[\*\s]', s_clean):
+                    continue
+                if re.search(r'[-–—:,]$', s_clean) or re.search(r'[a-zA-Z]+[-–—]\s*$', s_clean):
                     continue
                 # Filter dangling prepositions / conjunctions / verbs at end of sentence
-                if re.search(r'\b(to|is|are|of|and|or|in|for|with|a|an|the|that|as)\s*[\.\?\!]?$', s_clean, re.I):
+                if re.search(r'\b(to|is|are|was|were|be|been|of|and|or|in|for|with|a|an|the|that|as)\s*[\.\?\!]?$', s_clean, re.I):
                     continue
-                # Filter out self-referential introductory filler ("Our interest here is...", etc.)
-                if re.search(r'(?i)^(our interest here is|in this chapter|in this section|as noted before|as mentioned earlier|as we have seen|we shall now)\b', s_clean):
+                # Filter out self-referential introductory filler anywhere in sentence
+                if re.search(r'(?i)\b(our interest here is|our interest is|in this chapter|in this section|as noted before|as mentioned earlier|as we have seen|we shall now)\b', s_clean):
+                    continue
+                if len(s_clean.split()) < 5:
                     continue
                 sentences.append(s_clean)
 
