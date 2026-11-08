@@ -48,6 +48,14 @@ def check_topic_unlocked(topic_id: int, user_id: int):
 @router.get("/topics/{topic_id}/access/{user_id}")
 def get_topic_access(topic_id: int, user_id: int, actor=Depends(current_user)):
     require_owner(actor, user_id)
+    if actor.get("role") in ("admin", "instructor"):
+        return {
+            "topic_id": topic_id,
+            "user_id": user_id,
+            "is_unlocked": True,
+            "missing_prerequisite": None,
+            "message": "All topics are unlocked for instructors and administrators."
+        }
     is_unlocked, missing_name = check_topic_unlocked(topic_id, user_id)
     return {
         "topic_id": topic_id,

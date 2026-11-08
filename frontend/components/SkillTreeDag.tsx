@@ -106,8 +106,9 @@ export function SkillTreeDag({
             {graph.nodes.map((n, i) => {
               const isSelected = n.id === selected;
               const isDone = completed.includes(n.id);
+              const isStudent = currentUser?.role === "student";
               const prereqEdges = graph.edges.filter((e) => e.target === n.id);
-              const isLocked = !isDone && prereqEdges.length > 0 && !prereqEdges.every((e) => completed.includes(e.source));
+              const isLocked = isStudent && !isDone && prereqEdges.length > 0 && !prereqEdges.every((e) => completed.includes(e.source));
 
               let cardClass = "border-zinc-800 bg-zinc-900/40 hover:border-zinc-600";
               if (isSelected && isDone) {
@@ -179,8 +180,9 @@ export function SkillTreeDag({
 
           {node && (() => {
             const nodeDone = completed.includes(node.id);
+            const isStudent = currentUser?.role === "student";
             const nodePrereqs = graph.edges.filter((e) => e.target === node.id);
-            const nodeLocked = !nodeDone && nodePrereqs.length > 0 && !nodePrereqs.every((e) => completed.includes(e.source));
+            const nodeLocked = isStudent && !nodeDone && nodePrereqs.length > 0 && !nodePrereqs.every((e) => completed.includes(e.source));
             const missingPrereqNode = nodeLocked
               ? graph.nodes.find((n) => nodePrereqs.some((e) => e.source === n.id && !completed.includes(n.id)))
               : null;

@@ -273,23 +273,25 @@ export function TutorChat({
       }
 
       let currentLen = 0;
-      const step = Math.max(4, Math.ceil(fullAnswer.length / 50));
+      const totalLen = fullAnswer.length;
+      // Smooth animated reveal transition: ~75 steps with 35ms interval (~2.6s)
+      const step = Math.max(2, Math.ceil(totalLen / 75));
       streamIntervalRef.current = setInterval(() => {
-        currentLen = Math.min(fullAnswer.length, currentLen + step);
+        currentLen = Math.min(totalLen, currentLen + step);
         const chunk = fullAnswer.slice(0, currentLen);
 
         setMessages((prev) =>
           prev.map((m) => (m.id === assistantMsgId ? { ...m, content: chunk } : m))
         );
 
-        if (currentLen >= fullAnswer.length) {
+        if (currentLen >= totalLen) {
           if (streamIntervalRef.current) {
             clearInterval(streamIntervalRef.current);
             streamIntervalRef.current = null;
           }
           setStreamingMsgId(null);
         }
-      }, 25);
+      }, 35);
     } catch (err: any) {
       if (streamIntervalRef.current) {
         clearInterval(streamIntervalRef.current);
@@ -494,7 +496,7 @@ export function TutorChat({
               ) : (
                 <Check className="h-3.5 w-3.5 text-emerald-400" strokeWidth={2.5} />
               )}
-              <span>✓ Mark as Done</span>
+              <span>Mark as Done</span>
             </button>
           )}
 

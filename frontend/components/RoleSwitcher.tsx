@@ -27,15 +27,15 @@ export const RoleSwitcherModal: React.FC<RoleSwitcherModalProps> = ({
     {
       role: "student" as const,
       name: "Roshan Kumar",
-      email: "roshan@student.edu",
+      email: "roshan@chapter1.edu",
       badgeColor: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
       icon: GraduationCap,
-      description: "Prerequisite DAG exploration & Socratic AI tutoring",
+      description: "Prerequisite DAG exploration & interactive tutoring",
     },
     {
       role: "instructor" as const,
       name: "Dr. Alan Turing",
-      email: "turing@aitutor.edu",
+      email: "turing@chapter1.edu",
       badgeColor: "bg-amber-500/20 text-amber-300 border-amber-500/30",
       icon: BookOpen,
       description: "Course document ingestion & curriculum design",
@@ -43,7 +43,7 @@ export const RoleSwitcherModal: React.FC<RoleSwitcherModalProps> = ({
     {
       role: "admin" as const,
       name: "Ada Lovelace",
-      email: "admin@aitutor.edu",
+      email: "admin@chapter1.edu",
       badgeColor: "bg-orange-500/20 text-orange-400 border-orange-500/40",
       icon: ShieldCheck,
       description: "ChromaDB vector store, dense search & chunk RUD",
@@ -56,7 +56,7 @@ export const RoleSwitcherModal: React.FC<RoleSwitcherModalProps> = ({
       onSelectUser(matched);
     } else {
       onSelectUser({
-        user_id: r.role === "student" ? 3 : r.role === "instructor" ? 1 : 6,
+        user_id: r.role === "student" ? 3 : r.role === "instructor" ? 2 : 1,
         full_name: r.name,
         email: r.email,
         role: r.role,

@@ -276,22 +276,25 @@ def _extract_slide_topics_and_definitions(
 ) -> List[Dict[str, Any]]:
     """
     Parse dense vector chunks returned from ChromaDB into structured slide cards.
-
-    Processing Steps:
-    1. Extracts metadata attributes: file_name, page_number, cosine similarity distance.
-    2. Filters out presentation boilerplate and administrative acknowledgment slides.
-    3. Identifies the primary slide header as title and following lines as body bullets/formulas.
-    4. Deduplicates slides with identical normalized titles to present concise summaries.
-
-    Args:
-        chunks: List of dictionary records returned by vector_service.search().
-        subject_name: Optional course subject string to strip redundant course headers.
-
-    Returns:
-        List of structured slide dictionaries with keys: title, body, similarity, page, file.
+    Extracts valid slide/chapter titles, clean body lines, page numbers, and similarity.
     """
     parsed_slides = []
     seen_titles = set()
+
+    def is_valid_slide_title(c: str) -> bool:
+        c = c.strip()
+        if not c or len(c) < 3 or len(c) > 65:
+            return False
+        # Formulas, equations, and font artifacts (/H) are not titles
+        if any(sym in c for sym in ['=', '+', '->', '⊕', '≡', '≈', '≠', '/H', 'λ']):
+            return False
+        if not re.match(r'^[A-Z0-9"\']', c):
+            return False
+        if re.search(r'[,:;\-–—]$|\b(of|and|or|in|to|for|with|a|an|the|is|are)\s*$', c, re.I):
+            return False
+        if re.search(r'\b(is called|is defined as|we have|we see|which means|can be written)\b', c, re.I):
+            return False
+        return True
 
     for ch in chunks:
         doc = ch.get("document", "")
@@ -300,9 +303,8 @@ def _extract_slide_topics_and_definitions(
         page = meta.get("page_number", "N/A")
         src_file = meta.get("file_name", "Course Slides")
 
-        # Skip administrative acknowledgment / contributor slides
+        # Skip administrative acknowledgment slides
         doc_lower = doc.lower()
-        # General acknowledgment / administrative slide filtering
         if any(w in doc_lower for w in [
             "grateful thanks", "acknowledgment", "contribution of slides",
             "teaching assistant", "all rights reserved", "emergency exit"
@@ -323,15 +325,23 @@ def _extract_slide_topics_and_definitions(
                 if len(sub_clean) > 10:
                     cleaned_lines.append(sub_clean)
                 continue
-            cleaned = line.lstrip("-* \t\u261e\u25cf\u2022").strip()
+            cleaned = line.lstrip("-* 	☞●•").strip()
             if cleaned and len(cleaned) > 1:
                 cleaned_lines.append(cleaned)
 
         if not cleaned_lines:
             continue
 
-        title = cleaned_lines[0]
-        body = cleaned_lines[1:]
+        title = None
+        body = []
+        for line in cleaned_lines:
+            if title is None and is_valid_slide_title(line):
+                title = line
+            else:
+                body.append(line)
+
+        if not title:
+            title = meta.get('chapter') or meta.get('topic_name') or 'Course Material'
 
         norm_title = re.sub(r"[^a-zA-Z0-9]", "", title.lower())
         if norm_title in seen_titles:
@@ -349,136 +359,160 @@ def _extract_slide_topics_and_definitions(
 
     return parsed_slides
 
+
 def _synthesize_slide_rag_answer(
     query: str,
-    parsed_slides: List[Dict[str, Any]],
+    parsed_slides: list,
     subject_name: str,
     clean_topic: str
 ) -> str:
     """
-    Synthesize a clean, academically grounded response from retrieved slides.
-    Keeps debugging metadata hidden and directly addresses the specific question asked.
+    Synthesize a clean, plain, academically grounded response from retrieved course slides/notes.
+    - Plain, complete sentences and formulas without cutoffs or sentence fragments.
+    - Includes plain similarity score and page number for verifiable attribution.
+    - Excludes meta-commentary, introductory filler ('our interest here is...'), and reflective questions.
     """
     if not parsed_slides:
         return (
-            f"No direct matching topics were found in the uploaded course slides for **{subject_name}** "
-            f"matching *\"{query}\"*. Please check your query or verify the slide collection in the Vectors tab."
+            f"No direct matching topics were found in the uploaded course material for **{subject_name}** "
+            f"matching *'{query}'*. Please check your query or verify the document in the Vectors tab."
         )
 
     q_lower = query.lower()
-
-    # Collect all substantive lines and sentences from slides
-    all_lines = []
-    for s in parsed_slides:
-        for line in s.get("body", []):
-            if line and len(line.strip()) > 3:
-                all_lines.append(line.strip())
-        if not s.get("body") and s.get("chunk"):
-            doc = s["chunk"].get("document", "")
-            for p in doc.splitlines():
-                if p.strip() and len(p.strip()) > 10:
-                    all_lines.append(p.strip())
-
-    if not all_lines:
-        return (
-            f"Sufficient supporting information was not found in the selected course material for "
-            f"**{subject_name}** matching *\"{query}\"*. Please check your query or verify the course material."
-        )
-
-    # Break lines into individual sentences for fine-grained semantic targeting
-    sentences = []
-    for l in all_lines:
-        raw_sents = re.split(r'(?<=[.!?])\s+', l)
-        for s in raw_sents:
-            s_clean = s.strip()
-            if len(s_clean) >= 15:
-                sentences.append(s_clean)
-
-    # Deduplicate while preserving order
-    seen = set()
-    unique_sentences = []
-    for s in sentences:
-        norm = s.lower()
-        if norm not in seen:
-            seen.add(norm)
-            unique_sentences.append(s)
-
-    # Query keyword scoring
     stop_words = {
         "what", "is", "a", "an", "the", "are", "explain", "tell", "me", "about",
-        "how", "why", "in", "to", "for", "of", "and", "or", "does", "do", "can"
+        "how", "why", "in", "to", "for", "of", "and", "or", "does", "do", "can",
+        "define", "concept", "give", "show", "detail", "details"
     }
-    query_words = [w for w in re.findall(r'\b[a-z0-9_-]+\b', q_lower) if w not in stop_words and len(w) > 1]
+    query_words = set(w for w in re.findall(r'\b[a-z0-9_-]+\b', q_lower) if w not in stop_words and len(w) > 1)
 
-    # Check for specific concepts in query
-    is_foreign_key = "foreign" in q_lower
-    is_primary_key = "primary" in q_lower and "foreign" not in q_lower
-    is_diff = any(d in q_lower for d in ["difference", "different", "versus", "vs", "compare"])
-    is_example = any(e in q_lower for e in ["example", "instance", "sample"])
+    output_blocks = []
+    # Process top 2 most relevant parsed slide chunks
+    for p in parsed_slides[:2]:
+        sim_pct = f"{round(float(p.get('similarity', 0)) * 100, 1)}%"
+        page_val = p.get('page', 'N/A')
+        page_ref = f"Page {page_val}" if page_val != "N/A" else p.get('file', 'Notes')
+        raw_title = p.get('title', clean_topic or 'Course Material').strip()
 
-    selected_sentences = []
-    if is_diff:
-        for s in unique_sentences:
-            s_low = s.lower()
-            if "primary key" in s_low or "foreign key" in s_low or "reference" in s_low:
-                selected_sentences.append(s)
-    elif is_foreign_key:
-        for s in unique_sentences:
-            s_low = s.lower()
-            if any(term in s_low for term in ["foreign key", "reference", "referential", "cascade", "parent"]):
-                selected_sentences.append(s)
-    elif is_primary_key:
-        for s in unique_sentences:
-            s_low = s.lower()
-            if any(term in s_low for term in ["primary key", "unique", "null", "composite"]):
-                selected_sentences.append(s)
-    elif is_example:
-        for s in unique_sentences:
-            s_low = s.lower()
-            if any(term in s_low for term in ["for example", "example", "quiz attempt", "record"]):
-                selected_sentences.append(s)
-    else:
+        # Clean title: strip trailing numbers or "Section X.X"
+        clean_title = re.sub(r'^(Section|Chapter)\s+\d+(?:\.\d+)?\s*', '', raw_title, flags=re.I).strip()
+        clean_title = re.sub(r'\s+\d+$', '', clean_title).strip()
+        clean_title = re.sub(r'^\d+\.\s*', '', clean_title).strip()
+        if not clean_title or len(clean_title) < 3:
+            clean_title = clean_topic or 'Course Material'
+
+        doc = p.get('chunk', {}).get('document', '')
+        if not doc and p.get('body'):
+            doc = "\n".join(p['body'])
+
+        # 1. De-hyphenate words broken across newlines (e.g. representa-\ntion -> representation)
+        doc = re.sub(r'(\b[a-zA-Z]+)[-\u2010\u2013\u2014]\s*\n?\s*([a-zA-Z]+\b)', r'\1\2', doc)
+
+        # 2. Split lines and unwrap continuous sentences
+        raw_lines = [l.strip() for l in doc.splitlines() if l.strip()]
+        unwrapped = []
+        buf = []
+        for l in raw_lines:
+            if re.search(r'(?i)\b(copyright|all rights reserved|page \d+|table \d+\.\d+)\b', l):
+                continue
+            is_bullet = l.startswith(('-', '•', '*', '–')) or bool(re.match(r'^\d+[\.\)]\s+', l))
+            is_formula = any(sym in l for sym in ['=', '->', '⊕', '≡', '≈', '≠']) and ('(' in l or len(l) < 70)
+            is_sec_heading = bool(re.match(r'^(Section|Chapter|Table|Figure)\s+\d+', l, re.I))
+
+            if is_bullet or is_formula or is_sec_heading:
+                if buf:
+                    unwrapped.append(' '.join(buf))
+                    buf = []
+                unwrapped.append(l)
+            else:
+                buf.append(l)
+        if buf:
+            unwrapped.append(' '.join(buf))
+
+        # 3. Extract and score complete grammatical sentences and formulas
+        sentences = []
+        for item in unwrapped:
+            if bool(re.match(r'^(Section|Chapter|Table|Figure)\s+\d+', item, re.I)):
+                continue
+            if any(sym in item for sym in ['=', '->', '⊕']) and len(item) < 80:
+                clean_f = item.strip()
+                if len(clean_f) > 5:
+                    sentences.append(f"`{clean_f}`")
+                continue
+
+            sents = re.split(r'(?<=[.!?])\s+', item)
+            for s in sents:
+                s_clean = s.strip()
+                s_clean = re.sub(r'^(?:[0-9A-Fa-f]{1,4}\s+){2,}', '', s_clean)
+                if len(s_clean) < 22:
+                    continue
+                # If starts with broken closing bracket/punct like `tack), is called...`, clean or reject
+                if re.match(r'^[a-z0-9]+\)\s*[,;]?\s*', s_clean):
+                    s_clean = re.sub(r'^[a-z0-9]+\)\s*[,;]?\s*', '', s_clean)
+                    if s_clean:
+                        s_clean = s_clean[0].upper() + s_clean[1:]
+                if not re.match(r'^[A-Z0-9"(\[]', s_clean):
+                    continue
+                if not re.search(r'[\.\?\!]$', s_clean) and not s_clean.startswith('`'):
+                    continue
+                if re.search(r'[-–—:,]$', s_clean):
+                    continue
+                # Filter dangling prepositions / conjunctions / verbs at end of sentence
+                if re.search(r'\b(to|is|are|of|and|or|in|for|with|a|an|the|that|as)\s*[\.\?\!]?$', s_clean, re.I):
+                    continue
+                # Filter out self-referential introductory filler ("Our interest here is...", etc.)
+                if re.search(r'(?i)^(our interest here is|in this chapter|in this section|as noted before|as mentioned earlier|as we have seen|we shall now)\b', s_clean):
+                    continue
+                sentences.append(s_clean)
+
+        seen_s = set()
+        deduped = []
+        for s in sentences:
+            s_low = s.lower().strip()
+            if s_low not in seen_s:
+                seen_s.add(s_low)
+                deduped.append(s)
+
+        if not deduped:
+            continue
+
         scored = []
-        for s in unique_sentences:
+        for idx, s in enumerate(deduped):
+            score = 0
             s_low = s.lower()
-            score = sum(1 for w in query_words if w in s_low)
-            scored.append((score, s))
-        selected_sentences = [s for sc, s in scored if sc > 0]
-        if not selected_sentences:
-            selected_sentences = unique_sentences[:4]
+            for qw in query_words:
+                if qw in s_low:
+                    score += 2
+            if idx == 0:
+                score += 1
+            scored.append((score, idx, s))
 
-    if not selected_sentences:
-        selected_sentences = unique_sentences[:4]
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        chosen_indices = sorted([x[1] for x in scored[:4]])
+        chosen_sents = [deduped[i] for i in chosen_indices]
 
-    # Clean prose paragraphs
-    paragraphs = []
-    main_text = " ".join(selected_sentences[:3])
-    paragraphs.append(main_text)
+        paragraphs = []
+        prose_sents = [s for s in chosen_sents if not s.startswith('`')]
+        code_sents = [s for s in chosen_sents if s.startswith('`')]
 
-    if len(selected_sentences) > 3:
-        extra_points = []
-        for extra in selected_sentences[3:6]:
-            extra_points.append(f"- {extra}")
-        if extra_points:
-            paragraphs.append("\n".join(extra_points))
+        if prose_sents:
+            paragraphs.append(" ".join(prose_sents))
+        if code_sents:
+            for c in code_sents:
+                paragraphs.append(f"> {c}")
 
-    # Relevant Socratic follow-up question
-    if is_foreign_key or ("foreign" in " ".join(selected_sentences).lower()):
-        socratic_q = "*Reflective Question: What happens if an application tries to delete a parent row that still has corresponding child foreign key records, assuming ON DELETE CASCADE is NOT enabled?*"
-    elif is_primary_key or ("primary key" in " ".join(selected_sentences).lower()):
-        socratic_q = "*Reflective Question: Why is a primary key prohibited from containing NULL values in a relational database?*"
-    elif "transaction" in q_lower or "acid" in q_lower:
-        socratic_q = "*Reflective Question: Which ACID property ensures that partial transaction updates are rolled back upon system failure?*"
-    elif "normalization" in q_lower:
-        socratic_q = "*Reflective Question: What kind of functional dependency does Boyce-Codd Normal Form (BCNF) eliminate that 3NF might tolerate?*"
-    elif "index" in q_lower or "b-tree" in q_lower:
-        socratic_q = "*Reflective Question: How does creating a secondary index affect the speed of INSERT and UPDATE queries on that table?*"
-    else:
-        socratic_q = f"*Reflective Question: How does this concept connect to the core relational principles in {clean_topic or subject_name}?*"
+        if paragraphs:
+            block_content = "\n\n".join(paragraphs)
+            output_blocks.append(f"#### **{clean_title}** `(Match: {sim_pct} · {page_ref})`\n\n{block_content}")
 
-    paragraphs.append(socratic_q)
+    if not output_blocks:
+        return (
+            f"Sufficient supporting information was not found in the selected course material for "
+            f"**{subject_name}** matching *'{query}'*. Please check your query or verify the course material."
+        )
 
-    return "\n\n".join(paragraphs)
+    return "\n\n---\n\n".join(output_blocks)
+
 
 # ==============================================================================
 # Main Tutor API Endpoint
