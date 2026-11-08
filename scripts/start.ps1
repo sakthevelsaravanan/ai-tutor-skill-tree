@@ -12,9 +12,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $pgData 'PG_VERSION'))) {
 & $pgCtl -D $pgData status *> $null
 if ($LASTEXITCODE -ne 0) {
     $pgLog = Join-Path $logPath 'postgres.log'
-    $pgArgs = @('-D', ('"' + $pgData + '"'), '-l', ('"' + $pgLog + '"'), '-o', '"-p 5433 -h 127.0.0.1"', '-w', 'start')
-    $pgStart = Start-Process -FilePath $pgCtl -ArgumentList $pgArgs -WindowStyle Hidden -Wait -PassThru
-    if ($pgStart.ExitCode -ne 0) { throw 'PostgreSQL did not start; inspect .runtime/logs/postgres.log.' }
+    & $pgCtl -D $pgData -l $pgLog -o "-p 5433 -h 127.0.0.1" -w start
+    if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL did not start; inspect .runtime/logs/postgres.log.' }
 }
 $processes = @{}
 if (Test-Path .runtime/processes.json) {
