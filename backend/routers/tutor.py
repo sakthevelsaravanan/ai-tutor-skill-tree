@@ -155,26 +155,23 @@ def _is_substantive_chunk(raw_text: str) -> bool:
 
 def _is_contextual_query(q: str) -> bool:
     q_low = q.lower().strip()
-    # If the student explicitly names technical concepts, it's not a generic contextual follow-up
-    technical_terms = {
-        "key", "keys", "primary", "foreign", "composite", "candidate", "superkey",
-        "table", "relation", "schema", "normalization", "normal", "1nf", "2nf", "3nf", "bcnf",
-        "transaction", "acid", "isolation", "atomicity", "consistency", "durability",
-        "serializability", "concurrency", "lock", "locking", "deadlock",
-        "index", "indexes", "b-tree", "btree", "hash", "query", "planning", "scan",
-        "cipher", "matrix", "determinant", "encryption", "decryption", "hill"
-    }
     words = set(re.findall(r'\b[a-z0-9_-]+\b', q_low))
-    if words & technical_terms:
-        return False
-
     follow_up_phrases = [
         "give an example", "give example", "tell me more", "more details",
         "more detail", "how does that work", "why is that", "explain steps",
         "how to solve", "what does that mean", "why", "how so", "elaborate",
-        "show me an example", "can you explain further"
+        "show me an example", "can you explain further", "what about this",
+        "how does it work", "continue", "next step", "what is this", "what is it"
     ]
-    return any(p in q_low for p in follow_up_phrases) or (len(words) <= 2 and not words & technical_terms)
+    if any(q_low == p or q_low.startswith(p) for p in follow_up_phrases):
+        return True
+
+    vague_stop = {"what", "is", "how", "why", "to", "do", "does", "can", "explain", "tell", "me", "about", "it", "this", "that", "these", "those"}
+    non_stop = words - vague_stop
+    if not non_stop and words:
+        return True
+
+    return False
 
 # ==============================================================================
 # Numerical Solver for Matrix / Hill Cipher Problems (when asked explicitly)
@@ -662,8 +659,40 @@ def _build_tutor_response(req: TutorQueryRequest):
 
     raw_chunks = [c for c in raw_chunks if c.get("similarity", 0) >= 0.22]
 
+    # Hybrid Lexical & Title Match Re-Ranking
+    query_terms = [w.lower() for w in re.findall(r'\b[a-z0-9_-]+\b', req.query.lower()) 
+                   if len(w) > 1 and w not in {"what", "is", "a", "an", "the", "are", "explain", "tell", "me", "how", "why", "in", "to", "for", "of", "and", "or", "does", "do", "can"}]
+
+    if query_terms:
+        for c in raw_chunks:
+            doc_lower = c.get("document", "").lower()
+            meta_title = (c.get("metadata", {}).get("topic_name") or c.get("metadata", {}).get("chapter") or "").lower()
+
+            term_hits = sum(len(re.findall(rf'\b{re.escape(t)}\b', doc_lower)) for t in query_terms)
+            title_hit = any(t in meta_title for t in query_terms)
+
+            base_sim = c.get("similarity", 0)
+            boost = 0.0
+            if title_hit:
+                boost += 0.28
+            if term_hits > 0:
+                boost += min(0.25, 0.06 * term_hits)
+
+            c["similarity"] = min(0.96, round(base_sim + boost, 4))
+
+        exact_chunks = [
+            c for c in raw_chunks 
+            if any(t in c.get("document", "").lower() for t in query_terms) 
+            or any(t in (c.get("metadata", {}).get("topic_name") or "").lower() for t in query_terms)
+        ]
+        if exact_chunks:
+            raw_chunks = exact_chunks
+
+        raw_chunks.sort(key=lambda x: -x.get("similarity", 0))
+
     # 5. Extract topics and definitions from slide chunks
     parsed_slides = _extract_slide_topics_and_definitions(raw_chunks, subject_name=subject_name)
+    parsed_slides.sort(key=lambda x: -x.get("similarity", 0))
 
     top_sim = round(float(raw_chunks[0]["similarity"]), 4) if raw_chunks else None
     top_src = raw_chunks[0].get("metadata", {}).get("file_name", "Course Textbook") if raw_chunks else None

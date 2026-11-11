@@ -242,76 +242,9 @@ export function DocumentUpload({
           </div>
         </div>
       ) : (
-        <div className="course-workspace grid gap-4 items-start">
-          {/* Quick Selector for Already-Ingested Courses */}
-          {(() => {
-            const indexedSubjects = subjects.filter((s) => s.is_indexed);
-            if (indexedSubjects.length === 0) return null;
-            return (
-              <div className="course-library min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
-                <div className="space-y-1">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Ready Courses ({indexedSubjects.length})
-                  </span>
-                  <span className="block text-xs text-zinc-500">
-                    Select an indexed course to open its skill tree
-                  </span>
-                </div>
-                <div className="flex flex-col gap-2.5 max-h-[50dvh] overflow-y-auto">
-                  {indexedSubjects.map((sub) => {
-                    const isSelected = sub.subject_id === activeSubjectId;
-                    return (
-                      <div
-                        key={sub.subject_id}
-                        className={`flex min-w-0 items-center justify-between rounded-lg border transition ${
-                          isSelected
-                            ? "bg-orange-950/50 border-orange-500/70 text-orange-300 shadow-sm shadow-orange-500/10"
-                            : "bg-zinc-900/60 border-zinc-800 hover:border-zinc-700 text-zinc-200"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onSubjectChange(sub.subject_id);
-                            setHasDocument(true);
-                            onProceedToSkillTree();
-                          }}
-                          className="flex min-w-0 items-center gap-2 px-3 py-2 text-xs text-left font-medium focus:outline-none"
-                        >
-                          <span className="h-2 w-2 rounded-full bg-orange-500" />
-                          <span className="font-semibold break-words">{sub.subject_name}</span>
-                          <ArrowRight className="h-3 w-3 text-orange-400 opacity-70 ml-0.5" />
-                        </button>
-
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmModal({
-                                isOpen: true,
-                                title: `Delete Course '${sub.subject_name}'`,
-                                description: `Permanently delete '${sub.subject_name}' and wipe all its indexed vectors, topics, and documents?`,
-                                subjectId: sub.subject_id,
-                                subjectName: sub.subject_name,
-                              });
-                            }}
-                            className="pr-2.5 pl-1 py-2 text-zinc-500 hover:text-red-400 transition"
-                            title={`Delete course '${sub.subject_name}'`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-
+        <div className="w-full max-w-2xl mx-auto">
           {/* Document Input Form with Custom Name & Classification */}
-          <form onSubmit={handleUpload} className="course-form min-w-0 space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
+          <form onSubmit={handleUpload} className="course-form w-full space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 sm:p-7 shadow-xl">
           {/* 1. Drag and Drop File Zone */}
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-zinc-300">

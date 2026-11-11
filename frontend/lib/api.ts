@@ -66,7 +66,7 @@ export const api = {
   health: () => request<{status: string; database: string}>("/api/health"),
   startSession: (userId: number, subjectId: number, topicId?: number) => request<{session_id: string}>("/api/sessions/start", {method: "POST", body: JSON.stringify({user_id: userId, subject_id: subjectId, current_topic_id: topicId})}),
   getSessions: (userId: number, subjectId: number) => request<Array<{session_id: string}>>(`/api/sessions/user/${userId}?subject_id=${subjectId}`),
-  getSession: (id: string) => request<{current_topic_id: number; messages: Array<{log_id: number; role: "user" | "assistant"; content: string; created_at: string}>}>(`/api/sessions/${id}`),
+  getSession: (id: string) => request<{current_topic_id: number; messages: Array<{log_id: number; topic_id?: number | null; role: "user" | "assistant"; content: string; created_at: string}>}>(`/api/sessions/${id}`),
 
   getRoles: () => request<RolesPermissions>("/api/auth/roles"),
   getUsers: () => request<User[]>("/api/auth/users"),

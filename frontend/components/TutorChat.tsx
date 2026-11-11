@@ -38,6 +38,7 @@ interface TutorChatProps {
   currentUser: User;
   completedTopicIds?: Set<number>;
   onTopicCompleted?: (topicId: number) => void;
+  onNavigateToSkillTree?: () => void;
 }
 
 interface ChatMessage {
@@ -63,6 +64,7 @@ export function TutorChat({
   currentUser,
   completedTopicIds,
   onTopicCompleted,
+  onNavigateToSkillTree,
 }: TutorChatProps) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(initialTopicId || null);
@@ -71,7 +73,25 @@ export function TutorChat({
   const [lockBanner, setLockBanner] = useState<string | null>(null);
   const [query, setQuery] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [topicMessages, setTopicMessages] = useState<Record<number, ChatMessage[]>>({});
+  const activeTopicKey = selectedTopicId ?? (initialTopicId ?? 0);
+  const messages = topicMessages[activeTopicKey] ?? [];
+
+  const appendMessage = (msg: ChatMessage) => {
+    setTopicMessages((prev) => ({
+      ...prev,
+      [activeTopicKey]: [...(prev[activeTopicKey] || []), msg],
+    }));
+  };
+
+  const updateMessage = (msgId: string, content: string) => {
+    setTopicMessages((prev) => ({
+      ...prev,
+      [activeTopicKey]: (prev[activeTopicKey] || []).map((m) =>
+        m.id === msgId ? { ...m, content } : m
+      ),
+    }));
+  };
   const [usePrereqFilter, setUsePrereqFilter] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
@@ -101,7 +121,19 @@ export function TutorChat({
       const latest = await api.getSession(sessions[0].session_id);
       if (cancelled) return;
       setSessionId(sessions[0].session_id);
-      setMessages(latest.messages.filter(m=>m.role === "user" || m.role === "assistant").map(m=>({id:String(m.log_id),role:m.role,content:m.content,timestamp:new Date(m.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})})));
+      const grouped: Record<number, ChatMessage[]> = {};
+      for (const m of latest.messages) {
+        if (m.role !== "user" && m.role !== "assistant") continue;
+        const tid = m.topic_id ?? 0;
+        if (!grouped[tid]) grouped[tid] = [];
+        grouped[tid].push({
+          id: String(m.log_id),
+          role: m.role,
+          content: m.content,
+          timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        });
+      }
+      setTopicMessages(grouped);
     }).catch(e=>{if(!cancelled)setSessionError(e.message);}).finally(()=>{if(!cancelled)setHistoryLoading(false);});
     return ()=>{cancelled=true;};
   }, [currentUser.user_id, activeSubjectId]);
@@ -259,13 +291,16 @@ export function TutorChat({
       if (res.is_completed) {
         setIsCompleted(true);
         setCompletedTopicIdsList((prev) => [...prev, targetTopicId]);
-        setCompletionToast("Topic marked as completed!");
+        setCompletionToast("Topic marked as completed! Returning to Skill Tree...");
         if (onTopicCompleted) {
           onTopicCompleted(targetTopicId);
         }
         setTimeout(() => {
+          if (onNavigateToSkillTree) {
+            onNavigateToSkillTree();
+          }
           setCompletionToast(null);
-        }, 4000);
+        }, 850);
       }
     } catch (err: any) {
       console.error("Failed to mark topic as completed:", err);
@@ -287,7 +322,7 @@ export function TutorChat({
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    appendMessage(userMsg);
     setQuery("");
     setLoading(true);
 
@@ -318,7 +353,7 @@ export function TutorChat({
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      appendMessage(assistantMsg);
       setStreamingMsgId(assistantMsgId);
 
       if (streamIntervalRef.current) {
@@ -327,15 +362,13 @@ export function TutorChat({
 
       let currentLen = 0;
       const totalLen = fullAnswer.length;
-      // Smooth animated reveal transition: ~75 steps with 35ms interval (~2.6s)
-      const step = Math.max(2, Math.ceil(totalLen / 75));
+      // Slower, smooth typing animation: ~140 steps with 45ms interval (~6s)
+      const step = Math.max(1, Math.ceil(totalLen / 140));
       streamIntervalRef.current = setInterval(() => {
         currentLen = Math.min(totalLen, currentLen + step);
         const chunk = fullAnswer.slice(0, currentLen);
 
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantMsgId ? { ...m, content: chunk } : m))
-        );
+        updateMessage(assistantMsgId, chunk);
 
         if (currentLen >= totalLen) {
           if (streamIntervalRef.current) {
@@ -344,7 +377,7 @@ export function TutorChat({
           }
           setStreamingMsgId(null);
         }
-      }, 35);
+      }, 45);
     } catch (err: any) {
       if (streamIntervalRef.current) {
         clearInterval(streamIntervalRef.current);
@@ -357,7 +390,7 @@ export function TutorChat({
         content: `Error retrieving tutor response: ${err.message || "Unknown error"}`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
-      setMessages((prev) => [...prev, errorMsg]);
+      appendMessage(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -425,7 +458,7 @@ export function TutorChat({
                   streamIntervalRef.current = null;
                 }
                 setStreamingMsgId(null);
-                setMessages([]);
+                setTopicMessages((prev) => ({ ...prev, [activeTopicKey]: [] }));
               }}
               className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
             >
