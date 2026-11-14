@@ -403,46 +403,7 @@ END//
 DELIMITER ;
 
 -- ------------------------------------------------------------
--- 4. Demo seed data - run once only
--- ------------------------------------------------------------
-
-INSERT INTO LEARNING_SESSIONS
-    (session_id, user_id, subject_id, current_topic_id, current_stage, quiz_difficulty, confused_count)
-VALUES
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 3, 1, 105, 'quiz', 2, 0),
-    ('b2c3d4e5-f6a7-8901-bcde-fa2345678901', 4, 2, 206, 'clarify', 3, 2),
-    ('c3d4e5f6-a7b8-9012-cdef-ab3456789012', 5, 3, 303, 'explore', 2, 0)
-ON DUPLICATE KEY UPDATE current_stage = VALUES(current_stage);
-
-INSERT INTO CONVERSATION_LOGS (session_id, topic_id, role, stage, content)
-VALUES
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 105, 'assistant', 'topic', 'BST maintains invariant where left < root < right.'),
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 105, 'user', 'explore', 'How does deletion work for two children?'),
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 105, 'assistant', 'explore', 'Replace node with in-order successor or predecessor.'),
-    ('b2c3d4e5-f6a7-8901-bcde-fa2345678901', 206, 'user', 'clarify', 'Why does clock skew cause hold violations regardless of clock frequency?');
-
-INSERT INTO QUIZ_ATTEMPTS (session_id, user_id, topic_id, difficulty_level, mcq_score, check_score, verdict)
-VALUES
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 3, 101, 1, 3, 5, 'UNDERSTOOD'),
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 3, 102, 1, 3, 4, 'UNDERSTOOD'),
-    ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 3, 104, 2, 1, 2, 'CONFUSED'),
-    ('b2c3d4e5-f6a7-8901-bcde-fa2345678901', 4, 201, 1, 3, 5, 'UNDERSTOOD'),
-    ('b2c3d4e5-f6a7-8901-bcde-fa2345678901', 4, 202, 1, 3, 4, 'UNDERSTOOD'),
-    ('b2c3d4e5-f6a7-8901-bcde-fa2345678901', 4, 206, 3, 0, 1, 'CONFUSED');
-
-INSERT INTO STUDENT_TOPIC_MASTERY
-    (user_id, topic_id, mastery_status, best_mcq_score, latest_check_score, total_attempts)
-VALUES
-    (3, 101, 'MASTERED', 3, 5, 1),
-    (3, 102, 'MASTERED', 3, 4, 1),
-    (3, 104, 'NEEDS_PREREQ_REVIEW', 1, 2, 1),
-    (4, 201, 'MASTERED', 3, 5, 1),
-    (4, 202, 'MASTERED', 3, 4, 1),
-    (4, 206, 'NEEDS_PREREQ_REVIEW', 0, 1, 1)
-ON DUPLICATE KEY UPDATE mastery_status = VALUES(mastery_status);
-
--- ------------------------------------------------------------
--- 5. Nested and correlated analytical queries
+-- 4. Nested and correlated analytical queries
 -- ------------------------------------------------------------
 
 -- Students scoring below the average for the same topic.
@@ -549,7 +510,7 @@ WHERE u.role = 'student'
   );
 
 -- ------------------------------------------------------------
--- 6. RBAC grants (roles must already exist)
+-- 5. RBAC grants (roles must already exist)
 -- ------------------------------------------------------------
 
 GRANT SELECT, INSERT, UPDATE ON ai_tutor_db.LEARNING_SESSIONS TO student_role;
@@ -562,15 +523,3 @@ GRANT EXECUTE ON PROCEDURE ai_tutor_db.sp_get_student_mastery TO student_role;
 GRANT EXECUTE ON PROCEDURE ai_tutor_db.sp_recommend_next_topic TO student_role;
 GRANT EXECUTE ON PROCEDURE ai_tutor_db.sp_record_quiz_and_advance_stage TO student_role;
 GRANT ALL PRIVILEGES ON ai_tutor_db.* TO instructor_role;
-
--- ------------------------------------------------------------
--- 7. Manual verification (run separately when needed)
--- ------------------------------------------------------------
--- CALL sp_get_student_mastery(4);
--- SELECT fn_mastery_percentage(4) AS overall_mastery_percentage;
--- SELECT fn_calculate_subject_mastery(4, 1) AS subject_mastery_percentage;
--- CALL sp_recommend_next_topic(4, 1, @topic_id, @reason);
--- SELECT @topic_id AS recommended_topic_id, @reason AS recommendation_reason;
--- CALL sp_record_quiz_and_advance_stage('replace-with-session-uuid', 3, 5, 'UNDERSTOOD', @next_stage);
--- SELECT @next_stage;
--- SHOW TRIGGERS;

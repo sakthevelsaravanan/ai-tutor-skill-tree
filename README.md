@@ -221,6 +221,10 @@ Chapter1 implements complete Create, Read, Update, and Delete operations for den
 
 ### Slide-Grounded Response Synthesis
 The tutor pipeline generates academically grounded explanations without hallucinations:
+- **Hybrid Lexical & Title Match Re-Ranking**: Combines dense cosine similarity with exact keyword and topic title boosts (+0.28 for title hits, +0.06/hit for term frequency). Technical queries like `"http"` or `"nand"` rank top matching slides with >83% confidence.
+- **Topic-Isolated Dialogue History**: Dialogue is scoped strictly per topic (`Record<number, ChatMessage[]>`). Switching chapters opens a fresh conversation screen without carryover from previous units, while switching back restores that topic's history.
+- **Controlled Typewriter Stream Pace**: Reveal animation is calibrated to a comfortable, human-readable reading pace (~5.5–6s).
+- **Auto-Reroute on Completion**: Clicking "Mark as Done" automatically redirects the student to the Skill Tree view after an 850ms confirmation pause.
 - **Noise & Boilerplate Purging**: Strips administrative slides, table headers, copyright notices, and practice problems (`1.7 * Convert...`).
 - **Complete Grammatical Sentences**: Automatically de-hyphenates words split across newlines (e.g. `representa-\ntion` $\rightarrow$ `representation`) and filters out sentence fragments or dangling verbs.
 - **Attribution & Transparency**: Every synthesized section includes verifiable citation tags:
@@ -303,7 +307,8 @@ When presenting Chapter1 for the 50-mark evaluation, follow this structured runb
    - Notice the clean, complete sentences without cutoffs or conversational fluff.
 4. Click **Mark as Done** beside the composer:
    - Topic completes via PostgreSQL transaction in `student_topic_completions`.
-   - Chapter 2 immediately unlocks on the Skill Tree with a green tick mark (`✓`).
+   - After a brief confirmation, the system **automatically reroutes** the student to the **Skill Tree** view.
+   - Chapter 2 immediately unlocks with a green tick mark (`✓`).
 
 ### Step 3: Recursive CTE Live Traversal
 Open PostgreSQL `psql` (port 5433) or DBeaver and execute the ancestor prerequisite CTE:
@@ -355,6 +360,8 @@ ai-tutor-skill-tree/
 │   └── 03_topic_completion_tracking.sql # Manual Completion Tracking Migration
 ├── docs/                           # Documentation & Viva Guides
 │   ├── LOCAL_POSTGRES.md           # Local PostgreSQL Setup & Verification Guide
+│   ├── generate_conceptual_er_diagram.py # Conceptual ER Diagram Generator (Chen/Crow's Foot)
+│   ├── generate_relational_schema_diagram.py # Physical Relational Schema Generator (3NF)
 │   └── Chapter1_DBMS_Project_Code_Explanation_and_Viva_Guide.docx # Comprehensive Viva Guide
 ├── frontend/                       # Next.js 14 Web Application
 │   ├── app/                        # Next.js App Router & Global Providers
